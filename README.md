@@ -1,3 +1,7 @@
+<picture>
+<img alt="Cache UI Laravel" src="art/cache-ui-laravel.png">
+</picture>
+
 # Cache UI Laravel
 
 [![Latest Version on Packagist](https://img.shields.io/packagist/v/abr4xas/cache-ui-laravel.svg?style=flat-square)](https://packagist.org/packages/abr4xas/cache-ui-laravel)
