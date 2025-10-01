@@ -5,10 +5,9 @@ declare(strict_types=1);
 namespace Tests;
 
 use Abr4xas\CacheUiLaravel\CacheUiLaravelServiceProvider;
-use Illuminate\Foundation\Testing\TestCase as BaseTestCase;
-use Orchestra\Testbench\Concerns\CreatesApplication;
+use Orchestra\Testbench\TestCase as BaseTestCase;
 
-class TestCase extends \Orchestra\Testbench\TestCase
+class TestCase extends BaseTestCase
 {
 
     protected function getPackageProviders($app): array
