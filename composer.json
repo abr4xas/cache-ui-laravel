@@ -1,0 +1,64 @@
+{
+	"name": "abr4xas/cache-ui-laravel",
+	"description": "List, search and delete individual cache keys without having to purge the entire cache",
+	"type": "library",
+	"license": "MIT",
+	"autoload": {
+		"psr-4": {
+			"Abr4xas\\CacheUiLaravel\\": "src/"
+		}
+	},
+	"authors": [
+		{
+			"name": "Angel",
+			"email": "bullgram@gmail.com"
+		}
+	],
+	"minimum-stability": "stable",
+	"require": {
+		"php": "^8.3",
+		"illuminate/contracts": "^12.32.5",
+		"laravel/prompts": "^0.3.7"
+	},
+	"require-dev": {
+		"laravel/pint": "^1.25.1",
+		"orchestra/testbench": "^10.6",
+		"pestphp/pest": "^4.1.1",
+		"pestphp/pest-plugin-type-coverage": "^4.0.2",
+		"phpstan/phpstan": "^2.1.29",
+		"rector/rector": "^2.1.7"
+	},
+	"autoload-dev": {
+		"psr-4": {
+			"Tests\\": "tests/"
+		}
+	},
+	"prefer-stable": true,
+	"config": {
+		"sort-packages": true,
+		"preferred-install": "dist",
+		"allow-plugins": {
+			"pestphp/pest-plugin": true
+		}
+	},
+	"scripts": {
+		"refactor": "rector",
+		"lint": "pint",
+		"test:refactor": "rector --dry-run",
+		"test:lint": "pint --test",
+		"test:types": "phpstan analyse --ansi",
+		"test:unit": "pest --colors=always --parallel",
+		"test": [
+			"@test:refactor",
+			"@test:lint",
+			"@test:unit"
+		]
+	},
+	"extra": {
+		"laravel": {
+			"providers": [
+				"Abr4xas\\CacheUiLaravel\\CacheUiLaravelServiceProvider"
+			]
+		}
+	}
+}
