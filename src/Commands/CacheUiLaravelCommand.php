@@ -63,6 +63,22 @@ final class CacheUiLaravelCommand extends Command
 
         // Get the key value to show information
         $value = $this->store->get($selectedKey);
+
+        // If value is null, try different approaches based on driver
+        if ($value === null) {
+            if ($this->driver === 'redis') {
+                // For Redis, try with prefix
+                $prefix = config('database.redis.options.prefix', '');
+                if ($prefix) {
+                    $value = $this->store->get($prefix.$selectedKey);
+                }
+            } elseif ($this->driver === 'file') {
+                // For file driver, the selectedKey might be a filename hash
+                // We need to find the actual key by checking all files
+                $value = $this->getFileKeyValue($selectedKey);
+            }
+        }
+
         $valuePreview = $this->getValuePreview($value);
 
         $this->newLine();
@@ -81,7 +97,24 @@ final class CacheUiLaravelCommand extends Command
             return self::SUCCESS;
         }
 
-        if ($this->store->forget($selectedKey)) {
+        // Try to delete the key
+        $deleted = $this->store->forget($selectedKey);
+
+        // If not deleted, try different approaches based on driver
+        if (! $deleted) {
+            if ($this->driver === 'redis') {
+                // For Redis, try with prefix
+                $prefix = config('database.redis.options.prefix', '');
+                if ($prefix) {
+                    $deleted = $this->store->forget($prefix.$selectedKey);
+                }
+            } elseif ($this->driver === 'file') {
+                // For file driver, try to delete using the actual key
+                $deleted = $this->deleteFileKey($selectedKey);
+            }
+        }
+
+        if ($deleted) {
             info("🗑️  The key '{$selectedKey}' has been successfully deleted");
 
             return self::SUCCESS;
@@ -211,5 +244,52 @@ final class CacheUiLaravelCommand extends Command
         }
 
         return $stringValue;
+    }
+
+    private function getFileKeyValue(string $filename): mixed
+    {
+        try {
+            $cachePath = config('cache.stores.file.path', storage_path('framework/cache/data'));
+            $filePath = $cachePath.'/'.$filename;
+
+            if (! File::exists($filePath)) {
+                return null;
+            }
+
+            $content = File::get($filePath);
+
+            // Laravel file cache format: expiration_time + serialized_value
+            if (mb_strlen($content) < 10) {
+                return null;
+            }
+
+            $expiration = mb_substr($content, 0, 10);
+            $serialized = mb_substr($content, 10);
+
+            // Check if expired
+            if (time() > $expiration) {
+                return null;
+            }
+
+            return unserialize($serialized);
+        } catch (Exception) {
+            return null;
+        }
+    }
+
+    private function deleteFileKey(string $filename): bool
+    {
+        try {
+            $cachePath = config('cache.stores.file.path', storage_path('framework/cache/data'));
+            $filePath = $cachePath.'/'.$filename;
+
+            if (File::exists($filePath)) {
+                return File::delete($filePath);
+            }
+
+            return false;
+        } catch (Exception) {
+            return false;
+        }
     }
 }
