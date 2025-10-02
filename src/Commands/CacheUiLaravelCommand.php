@@ -62,21 +62,19 @@ final class CacheUiLaravelCommand extends Command
         }
 
         // Get the key value to show information
-        $value = $this->store->get($selectedKey);
+        // For Redis, we need to add the prefix back since we removed it when listing keys
+        if ($this->driver === 'redis') {
+            $prefix = config('database.redis.options.prefix', '');
+            $fullKey = $prefix ? $prefix.$selectedKey : $selectedKey;
+            $value = $this->store->get($fullKey);
+        } else {
+            $value = $this->store->get($selectedKey);
+        }
 
-        // If value is null, try different approaches based on driver
-        if ($value === null) {
-            if ($this->driver === 'redis') {
-                // For Redis, try with prefix
-                $prefix = config('database.redis.options.prefix', '');
-                if ($prefix) {
-                    $value = $this->store->get($prefix.$selectedKey);
-                }
-            } elseif ($this->driver === 'file') {
-                // For file driver, the selectedKey might be a filename hash
-                // We need to find the actual key by checking all files
-                $value = $this->getFileKeyValue($selectedKey);
-            }
+        // If value is still null, try different approaches based on driver
+        if ($value === null && $this->driver === 'file') {
+            // For file driver, we need to find the file that contains this key
+            $value = $this->getFileKeyValueByKey($selectedKey);
         }
 
         $valuePreview = $this->getValuePreview($value);
@@ -98,20 +96,19 @@ final class CacheUiLaravelCommand extends Command
         }
 
         // Try to delete the key
-        $deleted = $this->store->forget($selectedKey);
+        // For Redis, we need to add the prefix back since we removed it when listing keys
+        if ($this->driver === 'redis') {
+            $prefix = config('database.redis.options.prefix', '');
+            $fullKey = $prefix ? $prefix.$selectedKey : $selectedKey;
+            $deleted = $this->store->forget($fullKey);
+        } else {
+            $deleted = $this->store->forget($selectedKey);
+        }
 
         // If not deleted, try different approaches based on driver
-        if (! $deleted) {
-            if ($this->driver === 'redis') {
-                // For Redis, try with prefix
-                $prefix = config('database.redis.options.prefix', '');
-                if ($prefix) {
-                    $deleted = $this->store->forget($prefix.$selectedKey);
-                }
-            } elseif ($this->driver === 'file') {
-                // For file driver, try to delete using the actual key
-                $deleted = $this->deleteFileKey($selectedKey);
-            }
+        if (! $deleted && $this->driver === 'file') {
+            // For file driver, try to delete using the actual key
+            $deleted = $this->deleteFileKeyByKey($selectedKey);
         }
 
         if ($deleted) {
@@ -152,7 +149,7 @@ final class CacheUiLaravelCommand extends Command
                 return $key;
             }, $keys);
         } catch (Exception $e) {
-            error('Error al obtener claves de Redis: '.$e->getMessage());
+            error('Error getting Redis keys: '.$e->getMessage());
 
             return [];
         }
@@ -171,17 +168,39 @@ final class CacheUiLaravelCommand extends Command
             $keys = [];
 
             foreach ($files as $file) {
-                // El nombre del archivo en Laravel es un hash, pero podemos leer el contenido
-                $content = File::get($file->getPathname());
+                try {
+                    $content = File::get($file->getPathname());
 
-                // Formato del archivo de caché de Laravel: expiration_time + serialized_value
-                // Intentar extraer el nombre de la clave del contenido serializado
-                $keys[] = $file->getFilename();
+                    // Laravel file cache format: expiration_time + serialized_value
+                    if (mb_strlen($content) < 10) {
+                        continue;
+                    }
+
+                    $expiration = mb_substr($content, 0, 10);
+                    $serialized = mb_substr($content, 10);
+
+                    // Check if expired
+                    if (time() > $expiration) {
+                        continue;
+                    }
+
+                    // Try to unserialize to get the actual key
+                    $data = unserialize($serialized);
+                    if (is_array($data) && isset($data['key'])) {
+                        $keys[] = $data['key'];
+                    } else {
+                        // Fallback to filename if we can't extract the key
+                        $keys[] = $file->getFilename();
+                    }
+                } catch (Exception) {
+                    // If we can't read this file, skip it
+                    continue;
+                }
             }
 
             return $keys;
         } catch (Exception $e) {
-            error('Error al obtener claves del sistema de archivos: '.$e->getMessage());
+            error('Error getting file system keys: '.$e->getMessage());
 
             return [];
         }
@@ -194,7 +213,7 @@ final class CacheUiLaravelCommand extends Command
 
             return DB::table($table)->pluck('key')->toArray();
         } catch (Exception $e) {
-            error('Error al obtener claves de la base de datos: '.$e->getMessage());
+            error('Error getting database keys: '.$e->getMessage());
 
             return [];
         }
@@ -246,6 +265,51 @@ final class CacheUiLaravelCommand extends Command
         return $stringValue;
     }
 
+    private function getFileKeyValueByKey(string $key): mixed
+    {
+        try {
+            $cachePath = config('cache.stores.file.path', storage_path('framework/cache/data'));
+
+            if (! File::exists($cachePath)) {
+                return null;
+            }
+
+            $files = File::allFiles($cachePath);
+
+            foreach ($files as $file) {
+                try {
+                    $content = File::get($file->getPathname());
+
+                    // Laravel file cache format: expiration_time + serialized_value
+                    if (mb_strlen($content) < 10) {
+                        continue;
+                    }
+
+                    $expiration = mb_substr($content, 0, 10);
+                    $serialized = mb_substr($content, 10);
+
+                    // Check if expired
+                    if (time() > $expiration) {
+                        continue;
+                    }
+
+                    // Try to unserialize to get the data
+                    $data = unserialize($serialized);
+                    if (is_array($data) && isset($data['key']) && $data['key'] === $key) {
+                        return $data['value'] ?? null;
+                    }
+                } catch (Exception) {
+                    // If we can't read this file, skip it
+                    continue;
+                }
+            }
+
+            return null;
+        } catch (Exception) {
+            return null;
+        }
+    }
+
     private function getFileKeyValue(string $filename): mixed
     {
         try {
@@ -274,6 +338,51 @@ final class CacheUiLaravelCommand extends Command
             return unserialize($serialized);
         } catch (Exception) {
             return null;
+        }
+    }
+
+    private function deleteFileKeyByKey(string $key): bool
+    {
+        try {
+            $cachePath = config('cache.stores.file.path', storage_path('framework/cache/data'));
+
+            if (! File::exists($cachePath)) {
+                return false;
+            }
+
+            $files = File::allFiles($cachePath);
+
+            foreach ($files as $file) {
+                try {
+                    $content = File::get($file->getPathname());
+
+                    // Laravel file cache format: expiration_time + serialized_value
+                    if (mb_strlen($content) < 10) {
+                        continue;
+                    }
+
+                    $expiration = mb_substr($content, 0, 10);
+                    $serialized = mb_substr($content, 10);
+
+                    // Check if expired
+                    if (time() > $expiration) {
+                        continue;
+                    }
+
+                    // Try to unserialize to get the data
+                    $data = unserialize($serialized);
+                    if (is_array($data) && isset($data['key']) && $data['key'] === $key) {
+                        return File::delete($file->getPathname());
+                    }
+                } catch (Exception) {
+                    // If we can't read this file, skip it
+                    continue;
+                }
+            }
+
+            return false;
+        } catch (Exception) {
+            return false;
         }
     }
 
