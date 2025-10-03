@@ -72,7 +72,6 @@ php artisan cache:list --store=redis
 
 - 🔍 **Interactive search**: Search cache keys by typing text
 - 📋 **List all keys**: View all available keys in your cache
-- 👁️ **Value preview**: See the value of the key before deleting it
 - 🗑️ **Selective deletion**: Delete individual keys without affecting the rest of the cache
 - 🔌 **Multiple drivers**: Supports Redis, File and Database
 
@@ -96,7 +95,6 @@ $ php artisan cache:list
 > user_1_profile
 
 📝 Key:     user_1_profile
-💾 Value:   {"name":"John Doe","email":"john@example.com"}
 
 Are you sure you want to delete this cache key? › No / Yes
 
