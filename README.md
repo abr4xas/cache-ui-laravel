@@ -103,7 +103,7 @@ Are you sure you want to delete this cache key? › No / Yes
 🗑️  The key 'user_1_profile' has been successfully deleted
 ```
 
-### Programmatic Usage
+### Programmatic Usage (optional)
 
 You can also use the `CacheUiLaravel` class directly in your code:
 

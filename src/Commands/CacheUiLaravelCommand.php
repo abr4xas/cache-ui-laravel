@@ -61,27 +61,8 @@ final class CacheUiLaravelCommand extends Command
             return self::SUCCESS;
         }
 
-        // Get the key value to show information
-        // For Redis, we need to add the prefix back since we removed it when listing keys
-        if ($this->driver === 'redis') {
-            $prefix = config('database.redis.options.prefix', '');
-            $fullKey = $prefix ? $prefix.$selectedKey : $selectedKey;
-            $value = $this->store->get($fullKey);
-        } else {
-            $value = $this->store->get($selectedKey);
-        }
-
-        // If value is still null, try different approaches based on driver
-        if ($value === null && $this->driver === 'file') {
-            // For file driver, we need to find the file that contains this key
-            $value = $this->getFileKeyValueByKey($selectedKey);
-        }
-
-        $valuePreview = $this->getValuePreview($value);
-
         $this->newLine();
         $this->line("📝 <fg=cyan>Key:</>      {$selectedKey}");
-        $this->line("💾 <fg=cyan>Value:</>    {$valuePreview}");
         $this->newLine();
 
         $confirmed = confirm(
@@ -234,80 +215,6 @@ final class CacheUiLaravelCommand extends Command
         info('Supported drivers: redis, file, database');
 
         return [];
-    }
-
-    private function getValuePreview(mixed $value): string
-    {
-        $previewLimit = config('cache-ui-laravel.preview_limit', 100);
-
-        if (is_null($value)) {
-            return '<fg=gray>(null)</>';
-        }
-
-        if (is_bool($value)) {
-            return $value ? '<fg=green>true</>' : '<fg=red>false</>';
-        }
-
-        if (is_array($value) || is_object($value)) {
-            $json = json_encode($value, JSON_UNESCAPED_UNICODE);
-            if (mb_strlen($json) > $previewLimit) {
-                return mb_substr($json, 0, $previewLimit).'<fg=gray>...</>';
-            }
-
-            return $json;
-        }
-
-        $stringValue = (string) $value;
-        if (mb_strlen($stringValue) > $previewLimit) {
-            return mb_substr($stringValue, 0, $previewLimit).'<fg=gray>...</>';
-        }
-
-        return $stringValue;
-    }
-
-    private function getFileKeyValueByKey(string $key): mixed
-    {
-        try {
-            $cachePath = config('cache.stores.file.path', storage_path('framework/cache/data'));
-
-            if (! File::exists($cachePath)) {
-                return null;
-            }
-
-            $files = File::allFiles($cachePath);
-
-            foreach ($files as $file) {
-                try {
-                    $content = File::get($file->getPathname());
-
-                    // Laravel file cache format: expiration_time + serialized_value
-                    if (mb_strlen($content) < 10) {
-                        continue;
-                    }
-
-                    $expiration = mb_substr($content, 0, 10);
-                    $serialized = mb_substr($content, 10);
-
-                    // Check if expired
-                    if (time() > $expiration) {
-                        continue;
-                    }
-
-                    // Try to unserialize to get the data
-                    $data = unserialize($serialized);
-                    if (is_array($data) && isset($data['key']) && $data['key'] === $key) {
-                        return $data['value'] ?? null;
-                    }
-                } catch (Exception) {
-                    // If we can't read this file, skip it
-                    continue;
-                }
-            }
-
-            return null;
-        } catch (Exception) {
-            return null;
-        }
     }
 
     private function getFileKeyValue(string $filename): mixed
