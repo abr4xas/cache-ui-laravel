@@ -17,7 +17,7 @@
 	"minimum-stability": "stable",
 	"require": {
 		"php": "^8.3",
-		"illuminate/contracts": "^12.32.5",
+		"laravel/framework": "^12.32.5",
 		"laravel/prompts": "^0.3.7"
 	},
 	"require-dev": {
