@@ -7,6 +7,8 @@ namespace Abr4xas\CacheUiLaravel;
 use Exception;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\File;
+use Symfony\Component\Finder\SplFileInfo;
 
 final class CacheUiLaravel
 {
@@ -20,7 +22,7 @@ final class CacheUiLaravel
 
         return match ($driver) {
             'redis' => $this->getRedisKeys($storeName),
-            'file' => $this->getFileKeys(),
+            'file', 'key-aware-file' => $this->getFileKeys(),
             'database' => $this->getDatabaseKeys(),
             default => []
         };
@@ -61,13 +63,32 @@ final class CacheUiLaravel
         try {
             $cachePath = config('cache.stores.file.path', storage_path('framework/cache/data'));
 
-            if (! \Illuminate\Support\Facades\File::exists($cachePath)) {
+            if (! File::exists($cachePath)) {
                 return [];
             }
 
-            $files = \Illuminate\Support\Facades\File::allFiles($cachePath);
+            $files = File::allFiles($cachePath);
 
-            return array_map(fn (\Symfony\Component\Finder\SplFileInfo $file) => $file->getFilename(), $files);
+            return array_map(function (SplFileInfo $file) {
+                // Try to read the actual key from the cached value
+                $contents = file_get_contents($file->getPathname());
+
+                if (mb_strlen($contents) > 10) {
+                    try {
+                        $data = unserialize(mb_substr($contents, 10));
+
+                        // Check if it's our wrapped format with the key
+                        if (is_array($data) && isset($data['key'])) {
+                            return $data['key'];
+                        }
+                    } catch (Exception) {
+                        // Fall through to filename
+                    }
+                }
+
+                // Default to filename (hash) if we can't read the key
+                return $file->getFilename();
+            }, $files);
         } catch (Exception) {
             return [];
         }
