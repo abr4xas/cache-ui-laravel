@@ -50,6 +50,85 @@ CACHE_UI_PREVIEW_LIMIT=150
 CACHE_UI_SEARCH_SCROLL=20
 ```
 
+### Custom File Cache Driver (Recommended)
+
+For the best experience with file cache, you can use our custom `key-aware-file` driver that allows Cache UI to display real keys instead of file hashes.
+
+#### Driver Configuration
+
+1. **Add the custom store** to your `config/cache.php` file:
+
+```php
+// ... existing code ...
+
+    'stores' => [
+
+        // ... existing stores ...
+
+        'file' => [
+            'driver' => 'key-aware-file', // Changed from 'file' to 'key-aware-file'
+            'path' => storage_path('framework/cache/data'),
+            'lock_path' => storage_path('framework/cache/data'),
+        ],
+
+// ... existing code ...
+```
+
+2. **Register the custom driver** in your `AppServiceProvider`:
+
+```php
+<?php
+
+namespace App\Providers;
+
+use Abr4xas\CacheUiLaravel\KeyAwareFileStore;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\ServiceProvider;
+
+class AppServiceProvider extends ServiceProvider
+{
+    /**
+     * Register any application services.
+     */
+    public function register(): void
+    {
+        //
+    }
+
+    /**
+     * Bootstrap any application services.
+     */
+    public function boot(): void
+    {
+        // Register the custom file cache driver
+        Cache::extend('key-aware-file', function ($app, $config) {
+            return Cache::repository(new KeyAwareFileStore(
+                $app['files'],
+                $config['path'],
+                $config['file_permission'] ?? null
+            ));
+        });
+    }
+}
+```
+
+#### Custom Driver Benefits
+
+- ✅ **Readable keys**: Shows real keys instead of file hashes
+- ✅ **Full compatibility**: Works exactly like the standard `file` driver
+- ✅ **Better experience**: Enables more intuitive cache key search and management
+- ✅ **Backward compatibility**: Existing cache files continue to work
+
+#### Migration from Standard File Driver
+
+If you already have cached data with the standard `file` driver, don't worry. The `key-aware-file` driver is fully compatible and:
+
+- Existing data will continue to work normally
+- New keys will be stored in the new format
+- You can migrate gradually without data loss
+
+
+
 ## Usage
 
 ### Basic Command
@@ -126,6 +205,48 @@ $deleted = CacheUiLaravel::forgetKey('session_data', 'redis');
 ```bash
 composer test:unit
 ```
+
+## TODO
+
+The following tests need to be implemented to fully validate the new `KeyAwareFileStore` functionality:
+
+### Unit Tests for KeyAwareFileStore
+- [ ] Test `put()` method with various data types (string, integer, array, boolean, null)
+- [ ] Test `get()` method with wrapped and unwrapped data formats
+- [ ] Test `add()` method behavior and return values
+- [ ] Test `forever()` method with zero expiration
+- [ ] Test `increment()` method with numeric values
+- [ ] Test backward compatibility with legacy cache files
+- [ ] Test error handling for corrupted cache files
+- [ ] Test file permissions and directory creation
+
+### Integration Tests
+- [ ] Test complete cache workflow (store → retrieve → delete)
+- [ ] Test multiple keys with different expiration times
+- [ ] Test cache key listing with `getAllKeys()` method
+- [ ] Test cache key deletion with `forgetKey()` method
+- [ ] Test mixed wrapped and legacy data scenarios
+- [ ] Test performance with large numbers of cache keys
+
+### Driver Registration Tests
+- [ ] Test custom driver registration in `AppServiceProvider`
+- [ ] Test driver configuration with different file permissions
+- [ ] Test driver fallback behavior with missing configuration
+- [ ] Test driver isolation between different cache stores
+- [ ] Test error handling for invalid paths and permissions
+
+### CacheUiLaravel Integration Tests
+- [ ] Test `getAllKeys()` method with `key-aware-file` driver
+- [ ] Test `forgetKey()` method with `key-aware-file` driver
+- [ ] Test mixed driver scenarios (Redis + File + Database)
+- [ ] Test error handling and graceful degradation
+
+### Edge Cases and Error Handling
+- [ ] Test with read-only file systems
+- [ ] Test with insufficient disk space
+- [ ] Test with invalid serialized data
+- [ ] Test with very large cache values
+- [ ] Test with special characters in cache keys
 
 ## Changelog
 

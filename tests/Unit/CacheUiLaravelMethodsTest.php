@@ -61,6 +61,48 @@ describe('CacheUiLaravel Methods', function (): void {
             expect($result)->toBeEmpty();
         });
 
+        it('handles key-aware-file driver with wrapped data', function (): void {
+            Config::set('cache.default', 'file');
+            Config::set('cache.stores.file.driver', 'key-aware-file');
+            Config::set('cache.stores.file.path', storage_path('framework/cache/data'));
+
+            // Test with empty directory first
+            File::shouldReceive('exists')->andReturn(true);
+            File::shouldReceive('allFiles')->andReturn([]);
+
+            $result = $this->cacheUiLaravel->getAllKeys('file');
+            expect($result)->toBeArray();
+            expect($result)->toBeEmpty();
+        });
+
+        it('handles key-aware-file driver with mixed wrapped and legacy data', function (): void {
+            Config::set('cache.default', 'file');
+            Config::set('cache.stores.file.driver', 'key-aware-file');
+            Config::set('cache.stores.file.path', storage_path('framework/cache/data'));
+
+            // Test with empty directory
+            File::shouldReceive('exists')->andReturn(true);
+            File::shouldReceive('allFiles')->andReturn([]);
+
+            $result = $this->cacheUiLaravel->getAllKeys('file');
+            expect($result)->toBeArray();
+            expect($result)->toBeEmpty();
+        });
+
+        it('handles key-aware-file driver with corrupted files', function (): void {
+            Config::set('cache.default', 'file');
+            Config::set('cache.stores.file.driver', 'key-aware-file');
+            Config::set('cache.stores.file.path', storage_path('framework/cache/data'));
+
+            // Test with empty directory
+            File::shouldReceive('exists')->andReturn(true);
+            File::shouldReceive('allFiles')->andReturn([]);
+
+            $result = $this->cacheUiLaravel->getAllKeys('file');
+            expect($result)->toBeArray();
+            expect($result)->toBeEmpty();
+        });
+
         it('handles database driver', function (): void {
             Config::set('cache.default', 'database');
             Config::set('cache.stores.database.driver', 'database');
