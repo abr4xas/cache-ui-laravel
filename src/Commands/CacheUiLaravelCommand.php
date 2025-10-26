@@ -107,7 +107,7 @@ final class CacheUiLaravelCommand extends Command
     {
         return match ($this->driver) {
             'redis' => $this->getRedisKeys(),
-            'file' => $this->getFileKeys(),
+            'file', 'key-aware-file' => $this->getFileKeys(),
             'database' => $this->getDatabaseKeys(),
             'array' => $this->getArrayKeys(),
             default => $this->handleUnsupportedDriver()
