@@ -231,7 +231,7 @@ The following tests need to be implemented to fully validate the new `KeyAwareFi
 - [ ] Test complete cache workflow (store → retrieve → delete)
 - [ ] Test multiple keys with different expiration times
 - [ ] Test cache key listing with `getAllKeys()` method
-- [ ] Test cache key deletion with `forgetKey()` method
+- [x] Test cache key deletion with `forgetKey()` method
 - [ ] Test mixed wrapped and legacy data scenarios
 - [ ] Test performance with large numbers of cache keys
 
@@ -244,7 +244,7 @@ The following tests need to be implemented to fully validate the new `KeyAwareFi
 
 ### CacheUiLaravel Integration Tests
 - [ ] Test `getAllKeys()` method with `key-aware-file` driver
-- [ ] Test `forgetKey()` method with `key-aware-file` driver
+- [x] Test `forgetKey()` method with `key-aware-file` driver
 - [ ] Test mixed driver scenarios (Redis + File + Database)
 - [ ] Test error handling and graceful degradation
 
