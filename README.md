@@ -50,9 +50,13 @@ CACHE_UI_PREVIEW_LIMIT=150
 CACHE_UI_SEARCH_SCROLL=20
 ```
 
-### Custom File Cache Driver (Recommended)
+### Custom File Cache Driver (Only for File Store)
 
-For the best experience with file cache, you can use our custom `key-aware-file` driver that allows Cache UI to display real keys instead of file hashes.
+If you are using the `file` cache driver (default in Laravel), you should use our custom `key-aware-file` driver.
+
+**Why?** The standard Laravel `file` driver stores keys as hashes, making them unreadable. This custom driver wraps the value to store the real key, allowing you to see and search for them.
+
+> **Important**: This is **NOT** needed for Redis or Database drivers, as they support listing keys natively.
 
 #### Driver Configuration
 
@@ -84,6 +88,7 @@ namespace App\Providers;
 use Abr4xas\CacheUiLaravel\KeyAwareFileStore;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\ServiceProvider;
+use Illuminate\Foundation\Application;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -101,13 +106,11 @@ class AppServiceProvider extends ServiceProvider
     public function boot(): void
     {
         // Register the custom file cache driver
-        Cache::extend('key-aware-file', function ($app, $config) {
-            return Cache::repository(new KeyAwareFileStore(
-                $app['files'],
-                $config['path'],
-                $config['file_permission'] ?? null
-            ));
-        });
+        Cache::extend('key-aware-file', fn (Application $app, array $config) => Cache::repository(new KeyAwareFileStore(
+            $app['files'],
+            $config['path'],
+            $config['file_permission'] ?? null
+        )));
     }
 }
 ```
@@ -156,11 +159,15 @@ php artisan cache:list --store=redis
 
 ### Supported Drivers
 
-- ✅ **Redis**: Lists all keys using Redis KEYS command
-- ✅ **File**: Reads cache files from the filesystem
-- ✅ **Database**: Queries the cache table in the database
-- ⚠️ **Array**: Not supported (array driver doesn't persist between requests)
-- ⚠️ **Memcached**: Not currently supported
+| Driver | Support | Configuration Required |
+|--------|---------|------------------------|
+| **Redis** | ✅ Native | None (Works out of the box) |
+| **Database** | ✅ Native | None (Works out of the box) |
+| **File** | ✅ Enhanced | **Requires `key-aware-file` driver** |
+| **Array** | ⚠️ No | Not supported (doesn't persist) |
+| **Memcached** | ⚠️ No | Not currently supported |
+
+> **Note**: The `key-aware-file` driver is **only** needed if you use the `file` cache driver. If you use Redis or Database, you don't need to change your driver configuration.
 
 ### Usage Example
 
