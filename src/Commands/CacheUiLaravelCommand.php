@@ -90,6 +90,11 @@ final class CacheUiLaravelCommand extends Command
         if (! $deleted && $this->driver === 'file') {
             // For file driver, try to delete using the actual key
             $deleted = $this->deleteFileKeyByKey($selectedKey);
+
+            if (! $deleted) {
+                // If that fails, it might be a standard cache file where the key is the filename (hash)
+                $deleted = $this->deleteFileKey($selectedKey);
+            }
         }
 
         if ($deleted) {

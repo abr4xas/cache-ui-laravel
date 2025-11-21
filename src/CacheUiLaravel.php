@@ -33,9 +33,29 @@ final class CacheUiLaravel
      */
     public function forgetKey(string $key, ?string $store = null): bool
     {
+        $storeName = $store ?? config('cache.default');
         $cacheStore = $store !== null && $store !== '' && $store !== '0' ? Cache::store($store) : Cache::store();
 
-        return $cacheStore->forget($key);
+        if ($cacheStore->forget($key)) {
+            return true;
+        }
+
+        // Handle file driver specific logic for hashed keys
+        $driver = config("cache.stores.{$storeName}.driver");
+
+        if (in_array($driver, ['file', 'key-aware-file']) && preg_match('/^[a-f0-9]{40}$/', $key)) {
+            // Use the path from the specific store configuration, fallback to default
+            $cachePath = config("cache.stores.{$storeName}.path", config('cache.stores.file.path', storage_path('framework/cache/data')));
+
+            $parts = array_slice(mb_str_split($key, 2), 0, 2);
+            $path = $cachePath.'/'.implode('/', $parts).'/'.$key;
+
+            if (File::exists($path)) {
+                return File::delete($path);
+            }
+        }
+
+        return false;
     }
 
     private function getRedisKeys(string $store): array
