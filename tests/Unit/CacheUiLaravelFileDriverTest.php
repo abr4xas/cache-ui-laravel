@@ -28,7 +28,7 @@ describe('CacheUiLaravel File Driver Deletion', function (): void {
 
         // Expected file path reconstruction
         // 00/8c/008cb7ea48f292dd8b03d361a4c9f66085f77090
-        $expectedPath = $cachePath . '/00/8c/' . $key;
+        $expectedPath = $cachePath.'/00/8c/'.$key;
 
         // Mock File existence and deletion
         File::shouldReceive('exists')->with($expectedPath)->andReturn(true);
@@ -51,7 +51,7 @@ describe('CacheUiLaravel File Driver Deletion', function (): void {
         Config::set('cache.stores.file.path', $cachePath);
 
         $key = '008cb7ea48f292dd8b03d361a4c9f66085f77090';
-        $expectedPath = $cachePath . '/00/8c/' . $key;
+        $expectedPath = $cachePath.'/00/8c/'.$key;
 
         File::shouldReceive('exists')->with($expectedPath)->andReturn(true);
         File::shouldReceive('delete')->with($expectedPath)->andReturn(true);

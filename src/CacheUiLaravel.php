@@ -47,8 +47,8 @@ final class CacheUiLaravel
             // Use the path from the specific store configuration, fallback to default
             $cachePath = config("cache.stores.{$storeName}.path", config('cache.stores.file.path', storage_path('framework/cache/data')));
 
-            $parts = array_slice(str_split($key, 2), 0, 2);
-            $path = $cachePath . '/' . implode('/', $parts) . '/' . $key;
+            $parts = array_slice(mb_str_split($key, 2), 0, 2);
+            $path = $cachePath.'/'.implode('/', $parts).'/'.$key;
 
             if (File::exists($path)) {
                 return File::delete($path);
