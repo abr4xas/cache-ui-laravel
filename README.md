@@ -89,6 +89,7 @@ use Abr4xas\CacheUiLaravel\KeyAwareFileStore;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\ServiceProvider;
 use Illuminate\Foundation\Application;
+use Illuminate\Filesystem\Filesystem;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -107,7 +108,7 @@ class AppServiceProvider extends ServiceProvider
     {
         // Register the custom file cache driver
         Cache::extend('key-aware-file', fn (Application $app, array $config) => Cache::repository(new KeyAwareFileStore(
-            $app['files'],
+            $app->make(Filesystem::class),
             $config['path'],
             $config['file_permission'] ?? null
         )));
@@ -187,7 +188,31 @@ Are you sure you want to delete this cache key? › No / Yes
 🗑️  The key 'user_1_profile' has been successfully deleted
 ```
 
-### Programmatic Usage (optional)
+### Advanced Command Options
+
+The command supports several useful options:
+
+```bash
+# Show cache value before deletion
+php artisan cache:list --show-value
+
+# Export keys list to a file
+php artisan cache:list --export=keys.txt
+
+# Filter keys by regex pattern
+php artisan cache:list --filter="/^user_/"
+
+# Show additional information (size, type, expiration)
+php artisan cache:list --info
+
+# Limit number of keys displayed
+php artisan cache:list --limit=50
+
+# Combine multiple options
+php artisan cache:list --store=redis --show-value --info --limit=100
+```
+
+### Programmatic Usage
 
 You can also use the `CacheUiLaravel` class directly in your code:
 
@@ -200,11 +225,67 @@ $keys = CacheUiLaravel::getAllKeys();
 // Get all cache keys from a specific store
 $redisKeys = CacheUiLaravel::getAllKeys('redis');
 
+// Get limited number of keys (useful for large caches)
+$limitedKeys = CacheUiLaravel::getAllKeys('redis', 100);
+
 // Delete a specific key from default store
 $deleted = CacheUiLaravel::forgetKey('user_1_profile');
 
 // Delete a key from a specific store
 $deleted = CacheUiLaravel::forgetKey('session_data', 'redis');
+```
+
+### Advanced Use Cases
+
+#### Batch Operations
+
+```php
+use Abr4xas\CacheUiLaravel\Facades\CacheUiLaravel;
+
+// Get all keys matching a pattern
+$allKeys = CacheUiLaravel::getAllKeys('redis');
+$userKeys = array_filter($allKeys, fn($key) => str_starts_with($key, 'user_'));
+
+// Delete multiple keys
+foreach ($userKeys as $key) {
+    CacheUiLaravel::forgetKey($key, 'redis');
+}
+```
+
+#### Monitoring Cache Size
+
+```php
+use Abr4xas\CacheUiLaravel\Facades\CacheUiLaravel;
+use Illuminate\Support\Facades\Cache;
+
+$keys = CacheUiLaravel::getAllKeys('redis', 1000); // Limit to 1000 for performance
+$totalSize = 0;
+
+foreach ($keys as $key) {
+    $value = Cache::get($key);
+    if ($value !== null) {
+        $totalSize += strlen(serialize($value));
+    }
+}
+
+echo "Total cache size: " . number_format($totalSize / 1024 / 1024, 2) . " MB";
+```
+
+#### Cache Key Analysis
+
+```php
+use Abr4xas\CacheUiLaravel\Facades\CacheUiLaravel;
+
+$keys = CacheUiLaravel::getAllKeys('redis');
+$patterns = [];
+
+foreach ($keys as $key) {
+    $prefix = explode('_', $key)[0] ?? 'unknown';
+    $patterns[$prefix] = ($patterns[$prefix] ?? 0) + 1;
+}
+
+arsort($patterns);
+print_r($patterns); // Shows key distribution by prefix
 ```
 
 ## Testing
@@ -215,25 +296,28 @@ composer test:unit
 
 ## TODO
 
-The following tests need to be implemented to fully validate the new `KeyAwareFileStore` functionality:
+The following tests and improvements are planned or in progress:
 
 ### Unit Tests for KeyAwareFileStore
-- [ ] Test `put()` method with various data types (string, integer, array, boolean, null)
-- [ ] Test `get()` method with wrapped and unwrapped data formats
-- [ ] Test `add()` method behavior and return values
-- [ ] Test `forever()` method with zero expiration
-- [ ] Test `increment()` method with numeric values
-- [ ] Test backward compatibility with legacy cache files
-- [ ] Test error handling for corrupted cache files
-- [ ] Test file permissions and directory creation
+- [x] Test `put()` method with various data types (string, integer, array, boolean, null)
+- [x] Test `get()` method with wrapped and unwrapped data formats
+- [x] Test `add()` method behavior and return values
+- [x] Test `forever()` method with zero expiration
+- [x] Test `increment()` method with numeric values
+- [x] Test `decrement()` method with numeric values
+- [x] Test backward compatibility with legacy cache files
+- [x] Test error handling for corrupted cache files
+- [x] Test file permissions and directory creation
+- [x] Test `remember()` and `rememberForever()` methods
+- [x] Test `pull()`, `has()`, and `flush()` methods
 
 ### Integration Tests
-- [ ] Test complete cache workflow (store → retrieve → delete)
-- [ ] Test multiple keys with different expiration times
-- [ ] Test cache key listing with `getAllKeys()` method
-- [ ] Test cache key deletion with `forgetKey()` method
-- [ ] Test mixed wrapped and legacy data scenarios
-- [ ] Test performance with large numbers of cache keys
+- [x] Test complete cache workflow (store → retrieve → delete)
+- [x] Test multiple keys with different expiration times
+- [x] Test cache key listing with `getAllKeys()` method
+- [x] Test cache key deletion with `forgetKey()` method
+- [x] Test mixed wrapped and legacy data scenarios
+- [x] Test performance with large numbers of cache keys
 
 ### Driver Registration Tests
 - [ ] Test custom driver registration in `AppServiceProvider`
@@ -243,17 +327,43 @@ The following tests need to be implemented to fully validate the new `KeyAwareFi
 - [ ] Test error handling for invalid paths and permissions
 
 ### CacheUiLaravel Integration Tests
-- [ ] Test `getAllKeys()` method with `key-aware-file` driver
-- [ ] Test `forgetKey()` method with `key-aware-file` driver
-- [ ] Test mixed driver scenarios (Redis + File + Database)
-- [ ] Test error handling and graceful degradation
+- [x] Test `getAllKeys()` method with `key-aware-file` driver
+- [x] Test `forgetKey()` method with `key-aware-file` driver
+- [x] Test mixed driver scenarios (Redis + File + Database)
+- [x] Test error handling and graceful degradation
 
 ### Edge Cases and Error Handling
+- [x] Test with invalid serialized data
+- [x] Test with very large cache values
+- [x] Test with special characters in cache keys
 - [ ] Test with read-only file systems
 - [ ] Test with insufficient disk space
-- [ ] Test with invalid serialized data
-- [ ] Test with very large cache values
-- [ ] Test with special characters in cache keys
+
+### Performance Tests
+- [ ] Test benchmark for operations with many keys
+- [ ] Test load scenarios to validate optimizations
+
+## Configuration Options
+
+The package provides several configuration options in `config/cache-ui-laravel.php`:
+
+- `default_store`: Default cache store to use
+- `preview_limit`: Maximum characters to display in value preview (default: 100)
+- `search_scroll`: Number of visible items in search menu (default: 15)
+- `keys_limit`: Maximum number of keys to retrieve (null = unlimited)
+- `enable_logging`: Enable error logging for cache operations (default: false)
+- `operation_timeout`: Timeout in seconds for cache operations (0 = no timeout)
+
+You can also configure these via environment variables:
+
+```env
+CACHE_UI_DEFAULT_STORE=redis
+CACHE_UI_PREVIEW_LIMIT=150
+CACHE_UI_SEARCH_SCROLL=20
+CACHE_UI_KEYS_LIMIT=1000
+CACHE_UI_ENABLE_LOGGING=true
+CACHE_UI_OPERATION_TIMEOUT=30
+```
 
 ## Changelog
 

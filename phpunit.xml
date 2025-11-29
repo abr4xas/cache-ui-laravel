@@ -7,6 +7,7 @@
     <testsuites>
         <testsuite name="Unit">
             <directory>tests/Unit</directory>
+            <directory>tests/Integration</directory>
         </testsuite>
     </testsuites>
     <source>

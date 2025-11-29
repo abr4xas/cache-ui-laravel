@@ -55,4 +55,38 @@ return [
 
     'search_scroll' => env('CACHE_UI_SEARCH_SCROLL', 15),
 
+    /*
+    |--------------------------------------------------------------------------
+    | Keys Limit
+    |--------------------------------------------------------------------------
+    |
+    | Maximum number of keys to retrieve when listing cache keys.
+    | Set to null for unlimited (not recommended for large caches).
+    |
+    */
+
+    'keys_limit' => env('CACHE_UI_KEYS_LIMIT', null),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Enable Logging
+    |--------------------------------------------------------------------------
+    |
+    | Enable error logging for cache operations.
+    |
+    */
+
+    'enable_logging' => env('CACHE_UI_ENABLE_LOGGING', false),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Operation Timeout
+    |--------------------------------------------------------------------------
+    |
+    | Timeout in seconds for cache operations (0 = no timeout).
+    |
+    */
+
+    'operation_timeout' => env('CACHE_UI_OPERATION_TIMEOUT', 0),
+
 ];
