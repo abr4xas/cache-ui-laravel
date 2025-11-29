@@ -130,9 +130,10 @@ final class CacheUiLaravel
 
         // For file driver, if standard forget failed, try to delete by searching for the key in files
         if (! $deleted && ($driver === 'file' || $driver === 'key-aware-file')) {
+            // First try to find and delete by key content (for key-aware-file driver)
             $deleted = $this->deleteFileKeyByKey($key);
 
-            // If that fails, it might be a legacy cache file where the key is the filename (hash)
+            // If that fails, try to delete by filename (handles both hashed and direct filenames)
             if (! $deleted) {
                 $deleted = $this->deleteFileKeyByFilename($key);
             }
@@ -353,13 +354,26 @@ final class CacheUiLaravel
 
     /**
      * Delete a file cache key by filename (for legacy cache files)
+     * Handles both direct filenames and SHA1 hashed keys with directory structure
      */
     private function deleteFileKeyByFilename(string $filename): bool
     {
         try {
             $cachePath = config('cache.stores.file.path', storage_path('framework/cache/data'));
-            $filePath = $cachePath.'/'.$filename;
 
+            // Check if filename is a SHA1 hash (40 hex characters)
+            // Laravel stores hashed keys in directory structure: first 2 chars / next 2 chars / full hash
+            if (mb_strlen($filename) === 40 && ctype_xdigit($filename)) {
+                $subDir = mb_substr($filename, 0, 2).'/'.mb_substr($filename, 2, 2);
+                $filePath = $cachePath.'/'.$subDir.'/'.$filename;
+
+                if (File::exists($filePath)) {
+                    return File::delete($filePath);
+                }
+            }
+
+            // Try direct path (for non-hashed filenames)
+            $filePath = $cachePath.'/'.$filename;
             if (File::exists($filePath)) {
                 return File::delete($filePath);
             }
