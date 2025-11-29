@@ -39,6 +39,15 @@ return [
 
     // Number of visible items in scroll
     'search_scroll' => env('CACHE_UI_SEARCH_SCROLL', 15),
+
+    // Maximum number of keys to retrieve (null = unlimited)
+    'keys_limit' => env('CACHE_UI_KEYS_LIMIT', null),
+
+    // Enable error logging for cache operations
+    'enable_logging' => env('CACHE_UI_ENABLE_LOGGING', false),
+
+    // Timeout in seconds for cache operations (0 = no timeout)
+    'operation_timeout' => env('CACHE_UI_OPERATION_TIMEOUT', 0),
 ];
 ```
 
@@ -48,6 +57,9 @@ You can also configure these values in your `.env` file:
 CACHE_UI_DEFAULT_STORE=redis
 CACHE_UI_PREVIEW_LIMIT=150
 CACHE_UI_SEARCH_SCROLL=20
+CACHE_UI_KEYS_LIMIT=1000
+CACHE_UI_ENABLE_LOGGING=true
+CACHE_UI_OPERATION_TIMEOUT=30
 ```
 
 ### Custom File Cache Driver (Only for File Store)
@@ -56,7 +68,8 @@ If you are using the `file` cache driver (default in Laravel), you should use ou
 
 **Why?** The standard Laravel `file` driver stores keys as hashes, making them unreadable. This custom driver wraps the value to store the real key, allowing you to see and search for them.
 
-> **Important**: This is **NOT** needed for Redis or Database drivers, as they support listing keys natively.
+> [!IMPORTANT]
+> This is **NOT** needed for Redis or Database drivers, as they support listing keys natively.
 
 #### Driver Configuration
 
@@ -122,6 +135,7 @@ class AppServiceProvider extends ServiceProvider
 - ✅ **Full compatibility**: Works exactly like the standard `file` driver
 - ✅ **Better experience**: Enables more intuitive cache key search and management
 - ✅ **Backward compatibility**: Existing cache files continue to work
+- ✅ **Complete API**: Implements all Laravel cache methods (`put`, `get`, `add`, `forever`, `increment`, `decrement`, `remember`, `rememberForever`, `pull`, `has`, `flush`)
 
 #### Migration from Standard File Driver
 
@@ -157,6 +171,11 @@ php artisan cache:list --store=redis
 - 📋 **List all keys**: View all available keys in your cache
 - 🗑️ **Selective deletion**: Delete individual keys without affecting the rest of the cache
 - 🔌 **Multiple drivers**: Supports Redis, File and Database
+- ⚡ **Performance optimized**: Uses SCAN for Redis (safe for production) and supports key limits
+- 📊 **Additional info**: View cache value, size, expiration, and type
+- 📤 **Export functionality**: Export key lists to files
+- 🔎 **Pattern filtering**: Filter keys using regex patterns
+- 🛡️ **Error handling**: Comprehensive error handling with optional logging
 
 ### Supported Drivers
 
@@ -168,7 +187,8 @@ php artisan cache:list --store=redis
 | **Array** | ⚠️ No | Not supported (doesn't persist) |
 | **Memcached** | ⚠️ No | Not currently supported |
 
-> **Note**: The `key-aware-file` driver is **only** needed if you use the `file` cache driver. If you use Redis or Database, you don't need to change your driver configuration.
+> [!WARNING]
+> The `key-aware-file` driver is **only** needed if you use the `file` cache driver. If you use Redis or Database, you don't need to change your driver configuration.
 
 ### Usage Example
 
@@ -205,12 +225,21 @@ php artisan cache:list --filter="/^user_/"
 # Show additional information (size, type, expiration)
 php artisan cache:list --info
 
-# Limit number of keys displayed
+# Limit number of keys displayed (useful for large caches)
 php artisan cache:list --limit=50
 
 # Combine multiple options
 php artisan cache:list --store=redis --show-value --info --limit=100
 ```
+
+#### Option Details
+
+- **`--store=`**: Specify which cache store to use (defaults to Laravel's default cache store)
+- **`--show-value`**: Display the cache value before confirming deletion
+- **`--export=`**: Export the list of keys to a file (one key per line)
+- **`--filter=`**: Filter keys using a regex pattern (e.g., `/^user_/` matches keys starting with "user_")
+- **`--info`**: Show additional information about each key (size, expiration time, data type)
+- **`--limit=`**: Limit the number of keys to retrieve and display (helps with performance on large caches)
 
 ### Programmatic Usage
 
@@ -233,6 +262,11 @@ $deleted = CacheUiLaravel::forgetKey('user_1_profile');
 
 // Delete a key from a specific store
 $deleted = CacheUiLaravel::forgetKey('session_data', 'redis');
+
+// The methods include validation:
+// - Empty or invalid store names will use the default store
+// - Empty keys will return false
+// - Non-existent stores will throw an exception (if logging is enabled, errors are logged)
 ```
 
 ### Advanced Use Cases
@@ -258,7 +292,8 @@ foreach ($userKeys as $key) {
 use Abr4xas\CacheUiLaravel\Facades\CacheUiLaravel;
 use Illuminate\Support\Facades\Cache;
 
-$keys = CacheUiLaravel::getAllKeys('redis', 1000); // Limit to 1000 for performance
+// Use limit parameter for better performance on large caches
+$keys = CacheUiLaravel::getAllKeys('redis', 1000);
 $totalSize = 0;
 
 foreach ($keys as $key) {
@@ -270,6 +305,24 @@ foreach ($keys as $key) {
 
 echo "Total cache size: " . number_format($totalSize / 1024 / 1024, 2) . " MB";
 ```
+
+#### Error Handling and Logging
+
+The package includes comprehensive error handling. You can enable logging to track cache operation errors:
+
+```php
+// In config/cache-ui-laravel.php or .env
+'enable_logging' => true,
+
+// Errors will be logged to Laravel's log file
+// Example log entry:
+// [2024-01-01 12:00:00] local.WARNING: Cache UI: Failed to retrieve keys from store 'redis': Connection timeout
+```
+
+When logging is enabled, the following operations will log errors:
+- Key retrieval failures
+- Key deletion failures
+- Driver-specific errors (Redis connection, file system, database)
 
 #### Cache Key Analysis
 
@@ -288,11 +341,84 @@ arsort($patterns);
 print_r($patterns); // Shows key distribution by prefix
 ```
 
+#### Performance Optimization
+
+For large caches, always use the `limit` parameter to improve performance:
+
+```php
+use Abr4xas\CacheUiLaravel\Facades\CacheUiLaravel;
+
+// Get first 100 keys (useful for pagination)
+$firstBatch = CacheUiLaravel::getAllKeys('redis', 100);
+
+// Process in batches
+$offset = 0;
+$limit = 100;
+do {
+    $keys = CacheUiLaravel::getAllKeys('redis', $limit);
+    // Process keys...
+    $offset += $limit;
+} while (count($keys) === $limit);
+```
+
+**Note**: The package automatically uses `SCAN` for Redis instead of `KEYS *`, which is safer for production environments as it doesn't block the Redis server.
+
 ## Testing
 
+Run the test suite:
+
 ```bash
+# Run all tests
 composer test:unit
+
+# Run specific test file
+vendor/bin/pest tests/Unit/CacheUiLaravelMethodsTest.php
+
+# Run with coverage
+vendor/bin/pest --coverage
 ```
+
+The package includes comprehensive test coverage:
+- **Unit tests**: Individual component testing
+- **Integration tests**: End-to-end workflow testing
+- **Edge case tests**: Error handling and boundary conditions
+
+## Technical Details
+
+### Performance Optimizations
+
+The package includes several performance optimizations:
+
+1. **Redis SCAN**: Uses `SCAN` instead of `KEYS *` to prevent blocking Redis in production
+2. **Key Limits**: Optional limit parameters for all drivers to avoid loading all keys at once
+3. **Early Termination**: File driver stops reading files once the limit is reached
+4. **Efficient Queries**: Database driver uses optimized queries with limits
+
+### Error Handling
+
+The package includes comprehensive error handling:
+
+- **Validation**: Input validation for store names and cache keys
+- **Graceful Degradation**: Falls back to alternative methods when primary methods fail
+- **Logging**: Optional error logging via Laravel's Log facade
+- **Exception Handling**: Catches and handles driver-specific exceptions
+
+### KeyAwareFileStore Methods
+
+The `key-aware-file` driver implements all standard Laravel cache methods:
+
+- `put($key, $value, $seconds)` - Store an item with expiration
+- `get($key, $default = null)` - Retrieve an item
+- `add($key, $value, $seconds)` - Store an item only if it doesn't exist
+- `forever($key, $value)` - Store an item permanently
+- `increment($key, $value = 1)` - Increment a numeric value
+- `decrement($key, $value = 1)` - Decrement a numeric value
+- `remember($key, $ttl, $callback)` - Get or store a value
+- `rememberForever($key, $callback)` - Get or store a value permanently
+- `pull($key, $default = null)` - Get and delete an item
+- `has($key)` - Check if an item exists
+- `forget($key)` - Delete an item
+- `flush()` - Clear all items
 
 ## TODO
 
@@ -347,14 +473,25 @@ The following tests and improvements are planned or in progress:
 
 The package provides several configuration options in `config/cache-ui-laravel.php`:
 
-- `default_store`: Default cache store to use
-- `preview_limit`: Maximum characters to display in value preview (default: 100)
-- `search_scroll`: Number of visible items in search menu (default: 15)
-- `keys_limit`: Maximum number of keys to retrieve (null = unlimited)
-- `enable_logging`: Enable error logging for cache operations (default: false)
-- `operation_timeout`: Timeout in seconds for cache operations (0 = no timeout)
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `default_store` | string\|null | `null` | Default cache store to use when running the command |
+| `preview_limit` | int | `100` | Maximum characters to display in value preview |
+| `search_scroll` | int | `15` | Number of visible items in search menu |
+| `keys_limit` | int\|null | `null` | Maximum number of keys to retrieve (null = unlimited) |
+| `enable_logging` | bool | `false` | Enable error logging for cache operations |
+| `operation_timeout` | int | `0` | Timeout in seconds for cache operations (0 = no timeout) |
 
-You can also configure these via environment variables:
+### Performance Considerations
+
+- **Redis**: The package uses `SCAN` instead of `KEYS *` for safer key retrieval in production environments
+- **File Driver**: Supports optional `limit` parameter to avoid reading all files in large cache directories
+- **Database Driver**: Supports optional `limit` parameter to avoid loading all cache records at once
+- **Recommended**: Always use the `--limit` option or `keys_limit` config for large caches to improve performance
+
+### Environment Variables
+
+You can configure these options via environment variables:
 
 ```env
 CACHE_UI_DEFAULT_STORE=redis
