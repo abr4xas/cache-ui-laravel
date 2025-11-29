@@ -2,6 +2,14 @@
 
 All notable changes to `cache-ui-laravel` will be documented in this file.
 
+## v.1.5.1 - 2025-11-21
+
+### What's Changed
+
+* fix: file driver deletion bug and docs update by @abr4xas in https://github.com/abr4xas/cache-ui-laravel/pull/10
+
+**Full Changelog**: https://github.com/abr4xas/cache-ui-laravel/compare/v1.5.0...v.1.5.1
+
 ## v1.5.0 - 2025-10-26
 
 ### What's Changed
