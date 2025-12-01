@@ -4,10 +4,10 @@ declare(strict_types=1);
 
 namespace Abr4xas\CacheUiLaravel\Commands;
 
+use Abr4xas\CacheUiLaravel\CacheUiLaravel;
 use Exception;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Cache;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
 
 use function Laravel\Prompts\confirm;
@@ -18,23 +18,61 @@ use function Laravel\Prompts\warning;
 
 final class CacheUiLaravelCommand extends Command
 {
-    public $signature = 'cache:list {--store= : The cache store to use}';
+    public $signature = 'cache:list
+                        {--store= : The cache store to use}
+                        {--show-value : Show cache value before deletion}
+                        {--export= : Export keys list to file}
+                        {--filter= : Filter keys by regex pattern}
+                        {--info : Show additional information (size, expiration)}
+                        {--limit= : Limit number of keys to display}';
 
     public $description = 'List and delete individual cache keys';
 
     private string $driver;
 
-    private mixed $store;
+    private string $storeName;
 
-    public function handle(): int
+    private CacheUiLaravel $cacheUiLaravel;
+
+    public function handle(CacheUiLaravel $cacheUiLaravel): int
     {
-        $storeName = $this->option('store') ?? config('cache-ui-laravel.default_store') ?? config('cache.default');
-        $this->store = Cache::store($storeName);
-        $this->driver = config("cache.stores.{$storeName}.driver");
+        $this->cacheUiLaravel = $cacheUiLaravel;
+        $this->storeName = $this->option('store') ?? config('cache-ui-laravel.default_store') ?? config('cache.default');
+
+        // Validate store name
+        if (! isset($this->storeName) || ($this->storeName === '' || $this->storeName === '0')) {
+            error('❌ Invalid cache store name');
+
+            return self::FAILURE;
+        }
+
+        // Validate that store exists
+        $stores = config('cache.stores', []);
+        if (! isset($stores[$this->storeName])) {
+            error("❌ Cache store '{$this->storeName}' does not exist");
+
+            return self::FAILURE;
+        }
+
+        $this->driver = config("cache.stores.{$this->storeName}.driver");
 
         info("📦 Cache driver: {$this->driver}");
 
-        $keys = $this->getCacheKeys();
+        // Get limit if provided
+        $limit = $this->option('limit') ? (int) $this->option('limit') : null;
+        $keys = $this->cacheUiLaravel->getAllKeys($this->storeName, $limit);
+
+        // Apply regex filter if provided
+        $filter = $this->option('filter');
+        if ($filter) {
+            $keys = array_filter($keys, fn (string $key): bool => preg_match($filter, $key) === 1);
+        }
+
+        // Export keys if requested
+        $exportPath = $this->option('export');
+        if ($exportPath) {
+            return $this->exportKeys($keys, $exportPath);
+        }
 
         if ($keys === []) {
             warning('⚠️  No cache keys found.');
@@ -49,7 +87,7 @@ final class CacheUiLaravelCommand extends Command
         $selectedKey = search(
             label: '🔍 Search and select a cache key to delete',
             options: fn (string $value): array => mb_strlen($value) > 0
-                ? array_filter($keys, fn ($key): bool => str_contains(mb_strtolower((string) $key), mb_strtolower($value)))
+                ? array_filter($keys, fn ($key): bool => str_contains(mb_strtolower($key), mb_strtolower($value)))
                 : $keys,
             placeholder: 'Type to search...',
             scroll: $searchScroll
@@ -63,6 +101,17 @@ final class CacheUiLaravelCommand extends Command
 
         $this->newLine();
         $this->line("📝 <fg=cyan>Key:</>      {$selectedKey}");
+
+        // Show value if requested
+        if ($this->option('show-value')) {
+            $this->displayKeyValue($selectedKey);
+        }
+
+        // Show additional info if requested
+        if ($this->option('info')) {
+            $this->displayKeyInfo($selectedKey);
+        }
+
         $this->newLine();
 
         $confirmed = confirm(
@@ -76,26 +125,8 @@ final class CacheUiLaravelCommand extends Command
             return self::SUCCESS;
         }
 
-        // Try to delete the key
-        // For Redis, we need to add the prefix back since we removed it when listing keys
-        if ($this->driver === 'redis') {
-            $prefix = config('database.redis.options.prefix', '');
-            $fullKey = $prefix ? $prefix.$selectedKey : $selectedKey;
-            $deleted = $this->store->forget($fullKey);
-        } else {
-            $deleted = $this->store->forget($selectedKey);
-        }
-
-        // If not deleted, try different approaches based on driver
-        if (! $deleted && $this->driver === 'file') {
-            // For file driver, try to delete using the actual key
-            $deleted = $this->deleteFileKeyByKey($selectedKey);
-
-            if (! $deleted) {
-                // If that fails, it might be a standard cache file where the key is the filename (hash)
-                $deleted = $this->deleteFileKey($selectedKey);
-            }
-        }
+        // Use CacheUiLaravel to delete the key
+        $deleted = $this->cacheUiLaravel->forgetKey($selectedKey, $this->storeName);
 
         if ($deleted) {
             info("🗑️  The key '{$selectedKey}' has been successfully deleted");
@@ -108,209 +139,104 @@ final class CacheUiLaravelCommand extends Command
         return self::FAILURE;
     }
 
-    private function getCacheKeys(): array
-    {
-        return match ($this->driver) {
-            'redis' => $this->getRedisKeys(),
-            'file', 'key-aware-file' => $this->getFileKeys(),
-            'database' => $this->getDatabaseKeys(),
-            'array' => $this->getArrayKeys(),
-            default => $this->handleUnsupportedDriver()
-        };
-    }
-
-    private function getRedisKeys(): array
+    /**
+     * Display the value of a cache key
+     */
+    private function displayKeyValue(string $key): void
     {
         try {
-            $prefix = config('database.redis.options.prefix', '');
-            $connection = $this->store->getStore()->connection();
-            $keys = $connection->keys('*');
+            $value = Cache::store($this->storeName)->get($key);
+            $previewLimit = config('cache-ui-laravel.preview_limit', 100);
 
-            // Remover el prefijo si existe
-            return array_map(function ($key) use ($prefix) {
-                if ($prefix && str_starts_with($key, (string) $prefix)) {
-                    return mb_substr($key, mb_strlen((string) $prefix));
+            $this->newLine();
+            $this->line('<fg=yellow>Value:</>');
+
+            if ($value === null) {
+                $this->line('  <fg=gray>(null)</>');
+            } elseif (is_string($value)) {
+                $preview = mb_strlen($value) > $previewLimit
+                    ? mb_substr($value, 0, $previewLimit).'...'
+                    : $value;
+                $this->line('  '.$preview);
+                if (mb_strlen($value) > $previewLimit) {
+                    $this->line('  <fg=gray>(truncated, full length: '.mb_strlen($value).' characters)</>');
                 }
-
-                return $key;
-            }, $keys);
+            } elseif (is_array($value)) {
+                $this->line('  <fg=gray>(array with '.count($value).' items)</>');
+                $this->line('  '.json_encode($value, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
+            } elseif (is_object($value)) {
+                $this->line('  <fg=gray>(object: '.$value::class.')</>');
+                $this->line('  '.json_encode($value, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
+            } else {
+                $this->line('  '.var_export($value, true));
+            }
         } catch (Exception $e) {
-            error('Error getting Redis keys: '.$e->getMessage());
-
-            return [];
+            $this->line('  <fg=red>Error retrieving value: '.$e->getMessage().'</>');
         }
     }
 
-    private function getFileKeys(): array
+    /**
+     * Display additional information about a cache key
+     */
+    private function displayKeyInfo(string $key): void
     {
         try {
-            $cachePath = config('cache.stores.file.path', storage_path('framework/cache/data'));
+            $cacheStore = Cache::store($this->storeName);
+            $value = $cacheStore->get($key);
 
-            if (! File::exists($cachePath)) {
-                return [];
+            $this->newLine();
+            $this->line('<fg=yellow>Additional Information:</>');
+
+            // Size information
+            if ($value !== null) {
+                $size = mb_strlen(serialize($value));
+                $this->line('  <fg=cyan>Size:</>      '.$this->formatBytes($size));
             }
 
-            $files = File::allFiles($cachePath);
-            $keys = [];
+            // Type information
+            $type = gettype($value);
+            $this->line("  <fg=cyan>Type:</>      {$type}");
 
-            foreach ($files as $file) {
-                try {
-                    $content = File::get($file->getPathname());
-
-                    // Laravel file cache format: expiration_time + serialized_value
-                    if (mb_strlen($content) < 10) {
-                        continue;
-                    }
-
-                    $expiration = mb_substr($content, 0, 10);
-                    $serialized = mb_substr($content, 10);
-
-                    // Check if expired
-                    if (time() > $expiration) {
-                        continue;
-                    }
-
-                    // Try to unserialize to get the actual key
-                    $data = unserialize($serialized);
-                    if (is_array($data) && isset($data['key'])) {
-                        $keys[] = $data['key'];
-                    } else {
-                        // Fallback to filename if we can't extract the key
-                        $keys[] = $file->getFilename();
-                    }
-                } catch (Exception) {
-                    // If we can't read this file, skip it
-                    continue;
-                }
+            // For arrays and objects, show count
+            if (is_array($value)) {
+                $this->line('  <fg=cyan>Items:</>     '.count($value));
+            } elseif (is_object($value)) {
+                $this->line('  <fg=cyan>Class:</>     '.$value::class);
             }
-
-            return $keys;
         } catch (Exception $e) {
-            error('Error getting file system keys: '.$e->getMessage());
-
-            return [];
+            $this->line('  <fg=red>Error retrieving info: '.$e->getMessage().'</>');
         }
     }
 
-    private function getDatabaseKeys(): array
+    /**
+     * Export keys to a file
+     */
+    private function exportKeys(array $keys, string $path): int
     {
         try {
-            $table = config('cache.stores.database.table', 'cache');
+            $content = implode("\n", $keys);
+            File::put($path, $content);
+            info('✅ Exported '.count($keys)." keys to: {$path}");
 
-            return DB::table($table)->pluck('key')->toArray();
+            return self::SUCCESS;
         } catch (Exception $e) {
-            error('Error getting database keys: '.$e->getMessage());
+            error('❌ Failed to export keys: '.$e->getMessage());
 
-            return [];
+            return self::FAILURE;
         }
     }
 
-    private function getArrayKeys(): array
+    /**
+     * Format bytes to human readable format
+     */
+    private function formatBytes(int $bytes, int $precision = 2): string
     {
-        // The array driver doesn't persist between requests, but we can try to get the keys
-        // if the store has a method to list them
-        warning('The "array" driver does not persist keys between requests.');
+        $units = ['B', 'KB', 'MB', 'GB', 'TB'];
 
-        return [];
-    }
-
-    private function handleUnsupportedDriver(): array
-    {
-        error("⚠️  The driver '{$this->driver}' is not currently supported.");
-        info('Supported drivers: redis, file, database');
-
-        return [];
-    }
-
-    private function getFileKeyValue(string $filename): mixed
-    {
-        try {
-            $cachePath = config('cache.stores.file.path', storage_path('framework/cache/data'));
-            $filePath = $cachePath.'/'.$filename;
-
-            if (! File::exists($filePath)) {
-                return null;
-            }
-
-            $content = File::get($filePath);
-
-            // Laravel file cache format: expiration_time + serialized_value
-            if (mb_strlen($content) < 10) {
-                return null;
-            }
-
-            $expiration = mb_substr($content, 0, 10);
-            $serialized = mb_substr($content, 10);
-
-            // Check if expired
-            if (time() > $expiration) {
-                return null;
-            }
-
-            return unserialize($serialized);
-        } catch (Exception) {
-            return null;
+        for ($i = 0; $bytes > 1024 && $i < count($units) - 1; $i++) {
+            $bytes /= 1024;
         }
-    }
 
-    private function deleteFileKeyByKey(string $key): bool
-    {
-        try {
-            $cachePath = config('cache.stores.file.path', storage_path('framework/cache/data'));
-
-            if (! File::exists($cachePath)) {
-                return false;
-            }
-
-            $files = File::allFiles($cachePath);
-
-            foreach ($files as $file) {
-                try {
-                    $content = File::get($file->getPathname());
-
-                    // Laravel file cache format: expiration_time + serialized_value
-                    if (mb_strlen($content) < 10) {
-                        continue;
-                    }
-
-                    $expiration = mb_substr($content, 0, 10);
-                    $serialized = mb_substr($content, 10);
-
-                    // Check if expired
-                    if (time() > $expiration) {
-                        continue;
-                    }
-
-                    // Try to unserialize to get the data
-                    $data = unserialize($serialized);
-                    if (is_array($data) && isset($data['key']) && $data['key'] === $key) {
-                        return File::delete($file->getPathname());
-                    }
-                } catch (Exception) {
-                    // If we can't read this file, skip it
-                    continue;
-                }
-            }
-
-            return false;
-        } catch (Exception) {
-            return false;
-        }
-    }
-
-    private function deleteFileKey(string $filename): bool
-    {
-        try {
-            $cachePath = config('cache.stores.file.path', storage_path('framework/cache/data'));
-            $filePath = $cachePath.'/'.$filename;
-
-            if (File::exists($filePath)) {
-                return File::delete($filePath);
-            }
-
-            return false;
-        } catch (Exception) {
-            return false;
-        }
+        return round($bytes, $precision).' '.$units[$i];
     }
 }

@@ -4,25 +4,24 @@ declare(strict_types=1);
 
 use Abr4xas\CacheUiLaravel\KeyAwareFileStore;
 use Illuminate\Filesystem\Filesystem;
-use Illuminate\Support\Facades\File;
 
 describe('KeyAwareFileStore Simple Tests', function (): void {
     beforeEach(function (): void {
         $this->files = new Filesystem();
-        $this->cachePath = storage_path('framework/cache/simple-test');
+        $this->cachePath = sys_get_temp_dir().'/cache-ui-laravel-test/simple-test';
         $this->keyAwareFileStore = new KeyAwareFileStore($this->files, $this->cachePath);
 
         // Clean up test directory
-        if (File::exists($this->cachePath)) {
-            File::deleteDirectory($this->cachePath);
+        if ($this->files->exists($this->cachePath)) {
+            $this->files->deleteDirectory($this->cachePath);
         }
-        File::makeDirectory($this->cachePath, 0755, true);
+        $this->files->makeDirectory($this->cachePath, 0755, true);
     });
 
     afterEach(function (): void {
         // Clean up test directory
-        if (File::exists($this->cachePath)) {
-            File::deleteDirectory($this->cachePath);
+        if ($this->files->exists($this->cachePath)) {
+            $this->files->deleteDirectory($this->cachePath);
         }
     });
 

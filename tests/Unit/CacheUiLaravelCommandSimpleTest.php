@@ -8,7 +8,8 @@ describe('CacheUiLaravelCommand Basic Tests', function (): void {
     it('has correct signature and description', function (): void {
         $command = new CacheUiLaravelCommand();
 
-        expect($command->signature)->toBe('cache:list {--store= : The cache store to use}');
+        expect($command->signature)->toContain('cache:list');
+        expect($command->signature)->toContain('--store=');
         expect($command->description)->toBe('List and delete individual cache keys');
     });
 
@@ -26,14 +27,12 @@ describe('CacheUiLaravelCommand Basic Tests', function (): void {
     });
 });
 
-describe('getCacheKeys method', function (): void {
-    it('returns array for any driver type', function (): void {
+describe('command structure', function (): void {
+    it('uses CacheUiLaravel for key operations', function (): void {
         $command = new CacheUiLaravelCommand();
         $reflection = new ReflectionClass($command);
-        $method = $reflection->getMethod('getCacheKeys');
 
-        // Test that the method exists and is callable
-        expect($method)->toBeInstanceOf(ReflectionMethod::class);
-        expect($method->isPrivate())->toBeTrue();
+        // The command should have a cacheUiLaravel property
+        expect($reflection->hasProperty('cacheUiLaravel'))->toBeTrue();
     });
 });
