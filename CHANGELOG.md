@@ -2,6 +2,14 @@
 
 All notable changes to `cache-ui-laravel` will be documented in this file.
 
+## v2.0.0 - 2025-12-01
+
+### What's Changed
+
+* feat: major improvements and comprehensive test coverage by @abr4xas in https://github.com/abr4xas/cache-ui-laravel/pull/12
+
+**Full Changelog**: https://github.com/abr4xas/cache-ui-laravel/compare/v1.5.1...v2.0.0
+
 ## v.1.5.1 - 2025-11-21
 
 ### What's Changed
