@@ -2,6 +2,16 @@
 
 All notable changes to `cache-ui-laravel` will be documented in this file.
 
+## v2.1.0 - 2026-01-20
+
+### What's Changed
+
+* Bump actions/cache from 3 to 5 by @dependabot[bot] in https://github.com/abr4xas/cache-ui-laravel/pull/13
+* Bump dependabot/fetch-metadata from 2.4.0 to 2.5.0 by @dependabot[bot] in https://github.com/abr4xas/cache-ui-laravel/pull/15
+* Fix issue #14: Ensure filtered arrays have sequential indices by @abr4xas in https://github.com/abr4xas/cache-ui-laravel/pull/16
+
+**Full Changelog**: https://github.com/abr4xas/cache-ui-laravel/compare/v2.0.0...v2.1.0
+
 ## v2.0.0 - 2025-12-01
 
 ### What's Changed
