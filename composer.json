@@ -17,16 +17,16 @@
 	"minimum-stability": "stable",
 	"require": {
 		"php": "^8.3",
-		"laravel/framework": "^12.32.5",
-		"laravel/prompts": "^0.3.7"
+		"laravel/framework": "^12.47.0",
+		"laravel/prompts": "^0.3.10"
 	},
 	"require-dev": {
-		"laravel/pint": "^1.25.1",
-		"orchestra/testbench": "^10.6",
-		"pestphp/pest": "^4.1.1",
-		"pestphp/pest-plugin-type-coverage": "^4.0.2",
-		"phpstan/phpstan": "^2.1.29",
-		"rector/rector": "^2.1.7"
+		"laravel/pint": "^1.27.0",
+		"orchestra/testbench": "^10.9",
+		"pestphp/pest": "^4.3.1",
+		"pestphp/pest-plugin-type-coverage": "^4.0.3",
+		"phpstan/phpstan": "^2.1.34",
+		"rector/rector": "^2.3.2"
 	},
 	"autoload-dev": {
 		"psr-4": {
