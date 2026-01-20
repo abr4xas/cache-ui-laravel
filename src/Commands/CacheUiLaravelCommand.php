@@ -65,7 +65,7 @@ final class CacheUiLaravelCommand extends Command
         // Apply regex filter if provided
         $filter = $this->option('filter');
         if ($filter) {
-            $keys = array_filter($keys, fn (string $key): bool => preg_match($filter, $key) === 1);
+            $keys = array_values(array_filter($keys, fn (string $key): bool => preg_match($filter, $key) === 1));
         }
 
         // Export keys if requested
@@ -84,10 +84,13 @@ final class CacheUiLaravelCommand extends Command
 
         $searchScroll = config('cache-ui-laravel.search_scroll', 15);
 
+        // Ensure keys array is properly indexed (0, 1, 2, ...) to prevent search() from returning index instead of value
+        $keys = array_values($keys);
+
         $selectedKey = search(
             label: '🔍 Search and select a cache key to delete',
             options: fn (string $value): array => mb_strlen($value) > 0
-                ? array_filter($keys, fn ($key): bool => str_contains(mb_strtolower($key), mb_strtolower($value)))
+                ? array_values(array_filter($keys, fn ($key): bool => str_contains(mb_strtolower((string) $key), mb_strtolower($value))))
                 : $keys,
             placeholder: 'Type to search...',
             scroll: $searchScroll
