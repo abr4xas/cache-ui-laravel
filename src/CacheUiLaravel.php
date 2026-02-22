@@ -257,6 +257,7 @@ final class CacheUiLaravel
                                 // Skip until we reach the offset
                                 if ($skipped < $offset) {
                                     $skipped++;
+
                                     continue;
                                 }
 
@@ -279,6 +280,7 @@ final class CacheUiLaravel
                     // Skip until we reach the offset
                     if ($skipped < $offset) {
                         $skipped++;
+
                         continue;
                     }
 
