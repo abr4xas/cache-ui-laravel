@@ -211,6 +211,66 @@ describe('CacheUiLaravel Methods', function (): void {
             expect($result)->toBeEmpty();
         });
     });
+
+    describe('getAllKeys with pagination (offset)', function (): void {
+        it('validates negative offset to zero', function (): void {
+            Config::set('cache.default', 'database');
+            Config::set('cache.stores.database.driver', 'database');
+            Config::set('cache.stores.database.table', 'cache');
+
+            $mockQuery = Mockery::mock();
+            $mockQuery->shouldReceive('pluck')->with('key')->andReturn(collect(['key1', 'key2']));
+            $mockQuery->shouldReceive('limit')->andReturnSelf();
+            $mockQuery->shouldNotReceive('offset'); // Should not be called with negative offset
+
+            DB::shouldReceive('table')->with('cache')->andReturn($mockQuery);
+
+            $result = $this->cacheUiLaravel->getAllKeys('database', null, -5);
+            expect($result)->toBeArray();
+        });
+
+        it('applies offset correctly for database driver', function (): void {
+            Config::set('cache.default', 'database');
+            Config::set('cache.stores.database.driver', 'database');
+            Config::set('cache.stores.database.table', 'cache');
+
+            $mockQuery = Mockery::mock();
+            $mockQuery->shouldReceive('offset')->with(10)->once()->andReturnSelf();
+            $mockQuery->shouldReceive('limit')->with(5)->once()->andReturnSelf();
+            $mockQuery->shouldReceive('pluck')->with('key')->andReturn(collect(['key11', 'key12', 'key13', 'key14', 'key15']));
+
+            DB::shouldReceive('table')->with('cache')->andReturn($mockQuery);
+
+            $result = $this->cacheUiLaravel->getAllKeys('database', 5, 10);
+            expect($result)->toBeArray();
+            expect($result)->toHaveCount(5);
+        });
+
+        it('supports pagination workflow for database driver', function (): void {
+            Config::set('cache.default', 'database');
+            Config::set('cache.stores.database.driver', 'database');
+            Config::set('cache.stores.database.table', 'cache');
+
+            // First page
+            $mockQuery1 = Mockery::mock();
+            $mockQuery1->shouldReceive('limit')->with(2)->andReturnSelf();
+            $mockQuery1->shouldReceive('pluck')->with('key')->andReturn(collect(['key1', 'key2']));
+
+            // Second page
+            $mockQuery2 = Mockery::mock();
+            $mockQuery2->shouldReceive('offset')->with(2)->andReturnSelf();
+            $mockQuery2->shouldReceive('limit')->with(2)->andReturnSelf();
+            $mockQuery2->shouldReceive('pluck')->with('key')->andReturn(collect(['key3', 'key4']));
+
+            DB::shouldReceive('table')->with('cache')->andReturn($mockQuery1, $mockQuery2);
+
+            $page1 = $this->cacheUiLaravel->getAllKeys('database', 2, 0);
+            expect($page1)->toHaveCount(2);
+
+            $page2 = $this->cacheUiLaravel->getAllKeys('database', 2, 2);
+            expect($page2)->toHaveCount(2);
+        });
+    });
 });
 
 afterEach(function (): void {
