@@ -26,13 +26,15 @@ final class CacheUiLaravel
      *
      * @param  string|null  $store  The cache store to use (defaults to Laravel's default cache store)
      * @param  int|null  $limit  Maximum number of keys to return (null = unlimited, uses config if not provided)
+     * @param  int  $offset  Number of keys to skip before returning results (for pagination)
      * @return array<string> Array of cache key names
      *
      * @example
      * $keys = $cacheUiLaravel->getAllKeys('redis');
      * $limitedKeys = $cacheUiLaravel->getAllKeys('redis', 100);
+     * $page2 = $cacheUiLaravel->getAllKeys('redis', 100, 100);
      */
-    public function getAllKeys(?string $store = null, ?int $limit = null): array
+    public function getAllKeys(?string $store = null, ?int $limit = null, int $offset = 0): array
     {
         // Validate store name
         $storeName = $store ?? config('cache.default');
@@ -59,22 +61,22 @@ final class CacheUiLaravel
             $limit = null;
         }
 
+        // Validate offset
+        if ($offset < 0) {
+            $offset = 0;
+        }
+
         $driver = config("cache.stores.{$storeName}.driver");
 
         // Use config limit if not provided
         $limit ??= config('cache-ui-laravel.keys_limit');
 
         $keys = match ($driver) {
-            'redis' => $this->getRedisKeys($storeName, $limit),
-            'file', 'key-aware-file' => $this->getFileKeys($limit),
-            'database' => $this->getDatabaseKeys($limit),
+            'redis' => $this->getRedisKeys($storeName, $limit, $offset),
+            'file', 'key-aware-file' => $this->getFileKeys($limit, $offset),
+            'database' => $this->getDatabaseKeys($limit, $offset),
             default => []
         };
-
-        // Apply limit if set
-        if ($limit !== null && $limit > 0 && count($keys) > $limit) {
-            return array_slice($keys, 0, $limit);
-        }
 
         return $keys;
     }
@@ -142,7 +144,7 @@ final class CacheUiLaravel
         return $deleted;
     }
 
-    private function getRedisKeys(string $store, ?int $limit = null): array
+    private function getRedisKeys(string $store, ?int $limit = null, int $offset = 0): array
     {
         try {
             $cacheStore = Cache::store($store);
@@ -154,6 +156,7 @@ final class CacheUiLaravel
             // SCAN is safer for production environments
             $cursor = 0;
             $scanCount = 100;
+            $totalNeeded = $offset + ($limit ?? 0);
 
             do {
                 $result = $connection->scan($cursor, ['match' => '*', 'count' => $scanCount]);
@@ -163,8 +166,8 @@ final class CacheUiLaravel
                 foreach ($scannedKeys as $key) {
                     $keys[] = $key;
 
-                    // Stop if we've reached the limit
-                    if ($limit !== null && $limit > 0 && count($keys) >= $limit) {
+                    // Stop if we've collected enough keys (offset + limit)
+                    if ($limit !== null && $limit > 0 && count($keys) >= $totalNeeded) {
                         $cursor = 0; // Break the loop
                         break;
                     }
@@ -175,7 +178,7 @@ final class CacheUiLaravel
             if ($keys === []) {
                 try {
                     $allKeys = $connection->keys('*');
-                    $keys = $limit !== null && $limit > 0 ? array_slice($allKeys, 0, $limit) : $allKeys;
+                    $keys = $allKeys;
                 } catch (Exception $e) {
                     if (config('cache-ui-laravel.enable_logging', false)) {
                         Log::warning('Cache UI: Failed to get Redis keys using KEYS fallback', [
@@ -188,13 +191,25 @@ final class CacheUiLaravel
                 }
             }
 
-            return array_map(function ($key) use ($prefix) {
+            // Remove prefix from keys
+            $keys = array_map(function ($key) use ($prefix) {
                 if ($prefix && str_starts_with((string) $key, (string) $prefix)) {
                     return mb_substr((string) $key, mb_strlen((string) $prefix));
                 }
 
                 return $key;
             }, $keys);
+
+            // Apply offset and limit
+            if ($offset > 0) {
+                $keys = array_slice($keys, $offset);
+            }
+
+            if ($limit !== null && $limit > 0) {
+                $keys = array_slice($keys, 0, $limit);
+            }
+
+            return array_values($keys);
         } catch (Exception $e) {
             if (config('cache-ui-laravel.enable_logging', false)) {
                 Log::error('Cache UI: Error getting Redis keys', [
@@ -207,7 +222,7 @@ final class CacheUiLaravel
         }
     }
 
-    private function getFileKeys(?int $limit = null): array
+    private function getFileKeys(?int $limit = null, int $offset = 0): array
     {
         try {
             $cachePath = config('cache.stores.file.path', storage_path('framework/cache/data'));
@@ -219,13 +234,9 @@ final class CacheUiLaravel
             $files = File::allFiles($cachePath);
             $keys = [];
             $count = 0;
+            $skipped = 0;
 
             foreach ($files as $file) {
-                // Stop if we've reached the limit
-                if ($limit !== null && $limit > 0 && $count >= $limit) {
-                    break;
-                }
-
                 try {
                     // Try to read the actual key from the cached value
                     $contents = file_get_contents($file->getPathname());
@@ -243,8 +254,19 @@ final class CacheUiLaravel
 
                             // Check if it's our wrapped format with the key
                             if (is_array($data) && isset($data['key'])) {
+                                // Skip until we reach the offset
+                                if ($skipped < $offset) {
+                                    $skipped++;
+                                    continue;
+                                }
+
                                 $keys[] = $data['key'];
                                 $count++;
+
+                                // Stop if we've reached the limit
+                                if ($limit !== null && $limit > 0 && $count >= $limit) {
+                                    break;
+                                }
 
                                 continue;
                             }
@@ -254,8 +276,19 @@ final class CacheUiLaravel
                     }
 
                     // Default to filename (hash) if we can't read the key
+                    // Skip until we reach the offset
+                    if ($skipped < $offset) {
+                        $skipped++;
+                        continue;
+                    }
+
                     $keys[] = $file->getFilename();
                     $count++;
+
+                    // Stop if we've reached the limit
+                    if ($limit !== null && $limit > 0 && $count >= $limit) {
+                        break;
+                    }
                 } catch (Exception) {
                     // Skip files we can't read
                     continue;
@@ -274,11 +307,15 @@ final class CacheUiLaravel
         }
     }
 
-    private function getDatabaseKeys(?int $limit = null): array
+    private function getDatabaseKeys(?int $limit = null, int $offset = 0): array
     {
         try {
             $table = config('cache.stores.database.table', 'cache');
             $query = DB::table($table);
+
+            if ($offset > 0) {
+                $query->offset($offset);
+            }
 
             if ($limit !== null && $limit > 0) {
                 $query->limit($limit);

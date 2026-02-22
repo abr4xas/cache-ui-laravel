@@ -351,11 +351,11 @@ use Abr4xas\CacheUiLaravel\Facades\CacheUiLaravel;
 // Get first 100 keys (useful for pagination)
 $firstBatch = CacheUiLaravel::getAllKeys('redis', 100);
 
-// Process in batches
+// Process in batches with pagination
 $offset = 0;
 $limit = 100;
 do {
-    $keys = CacheUiLaravel::getAllKeys('redis', $limit);
+    $keys = CacheUiLaravel::getAllKeys('redis', $limit, $offset);
     // Process keys...
     $offset += $limit;
 } while (count($keys) === $limit);
