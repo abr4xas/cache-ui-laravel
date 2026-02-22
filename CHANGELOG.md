@@ -2,6 +2,14 @@
 
 All notable changes to `cache-ui-laravel` will be documented in this file.
 
+## v2.1.1 - 2026-02-22
+
+### What's Changed
+
+* Fix #17: Add offset parameter to getAllKeys for pagination support by @abr4xas in https://github.com/abr4xas/cache-ui-laravel/pull/19
+
+**Full Changelog**: https://github.com/abr4xas/cache-ui-laravel/compare/v2.1.0...v2.1.1
+
 ## v2.1.0 - 2026-01-20
 
 ### What's Changed
