@@ -17,12 +17,12 @@
 	"minimum-stability": "stable",
 	"require": {
 		"php": "^8.3",
-		"laravel/framework": "^12.47.0",
+		"laravel/framework": "^13.0",
 		"laravel/prompts": "^0.3.10"
 	},
 	"require-dev": {
 		"laravel/pint": "^1.27.0",
-		"orchestra/testbench": "^10.9",
+		"orchestra/testbench": "^11.0",
 		"pestphp/pest": "^4.3.1",
 		"pestphp/pest-plugin-type-coverage": "^4.0.3",
 		"phpstan/phpstan": "^2.1.34",
