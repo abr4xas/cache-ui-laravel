@@ -71,14 +71,12 @@ final class CacheUiLaravel
         // Use config limit if not provided
         $limit ??= config('cache-ui-laravel.keys_limit');
 
-        $keys = match ($driver) {
+        return match ($driver) {
             'redis' => $this->getRedisKeys($storeName, $limit, $offset),
             'file', 'key-aware-file' => $this->getFileKeys($limit, $offset),
             'database' => $this->getDatabaseKeys($limit, $offset),
             default => []
         };
-
-        return $keys;
     }
 
     /**

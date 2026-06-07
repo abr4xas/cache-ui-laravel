@@ -122,6 +122,29 @@ final class KeyAwareFileStore extends FileStore
     }
 
     /**
+     * Touch an item in the cache.
+     *
+     * @param  string  $key  The cache key
+     * @param  int  $seconds  Number of seconds until expiration
+     * @return bool True if successful, false otherwise
+     */
+    public function touch($key, $seconds): bool
+    {
+        $payload = $this->getPayload($key);
+
+        if (is_null($payload['data'])) {
+            return false;
+        }
+
+        $data = $payload['data'];
+        $unwrapped = is_array($data) && array_key_exists('key', $data) && array_key_exists('value', $data)
+            ? $data['value']
+            : $data;
+
+        return $this->put($key, $unwrapped, $seconds);
+    }
+
+    /**
      * Increment the value of an item in the cache.
      *
      * @param  string  $key  The cache key
