@@ -2,6 +2,18 @@
 
 All notable changes to `cache-ui-laravel` will be documented in this file.
 
+## v2.2.0 - 2026-06-07
+
+### What's Changed
+
+* Bump to Laravel 13 & migrate by @enwi in https://github.com/abr4xas/cache-ui-laravel/pull/22
+
+### New Contributors
+
+* @enwi made their first contribution in https://github.com/abr4xas/cache-ui-laravel/pull/22
+
+**Full Changelog**: https://github.com/abr4xas/cache-ui-laravel/compare/v2.1.1...v2.2.0
+
 ## v2.1.1 - 2026-02-22
 
 ### What's Changed
