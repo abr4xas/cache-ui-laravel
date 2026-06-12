@@ -35,11 +35,11 @@ final class CacheUiLaravelServiceProvider extends ServiceProvider
         // boot method attempts to read from the cache.
         $this->app->booting(function (): void {
             Cache::extend('key-aware-file', fn (Application $app, array $config): Repository => Cache::repository(
-                (new KeyAwareFileStore(
+                new KeyAwareFileStore(
                     $app->make(Filesystem::class),
                     $config['path'] ?? storage_path('framework/cache/data'),
                     $config['permission'] ?? $config['file_permission'] ?? null,
-                ))->setLockDirectory($config['lock_path'] ?? null)
+                )->setLockDirectory($config['lock_path'] ?? null)
             ));
         });
     }
