@@ -89,4 +89,18 @@ return [
 
     'operation_timeout' => env('CACHE_UI_OPERATION_TIMEOUT', 0),
 
+    /*
+    |--------------------------------------------------------------------------
+    | Hide Internal Keys
+    |--------------------------------------------------------------------------
+    |
+    | When enabled, Laravel's internal cache bookkeeping keys are hidden from
+    | the listing. This currently covers the companion timestamp entries that
+    | Cache::flexible() (stale-while-revalidate) stores next to each value as
+    | "illuminate:cache:flexible:created:<key>". Disable to see them as well.
+    |
+    */
+
+    'hide_internal_keys' => env('CACHE_UI_HIDE_INTERNAL_KEYS', true),
+
 ];

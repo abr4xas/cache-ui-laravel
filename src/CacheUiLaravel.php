@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Abr4xas\CacheUiLaravel;
 
 use Exception;
+use Illuminate\Cache\RedisStore;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
@@ -18,6 +19,17 @@ use Illuminate\Support\Facades\Log;
  */
 final class CacheUiLaravel
 {
+    /**
+     * Prefix Laravel uses for the companion timestamp entry written by Cache::flexible().
+     *
+     * The "stale-while-revalidate" helper stores an
+     * `illuminate:cache:flexible:created:<key>` entry next to each value to track
+     * its freshness. That entry is internal bookkeeping, not a user key.
+     *
+     * @see \Illuminate\Cache\Repository::FLEXIBLE_CREATED_KEY_PREFIX
+     */
+    private const string FLEXIBLE_CREATED_KEY_PREFIX = 'illuminate:cache:flexible:created:';
+
     /**
      * Get all available cache keys from the specified store.
      *
@@ -71,12 +83,21 @@ final class CacheUiLaravel
         // Use config limit if not provided
         $limit ??= config('cache-ui-laravel.keys_limit');
 
-        return match ($driver) {
+        $keys = match ($driver) {
             'redis' => $this->getRedisKeys($storeName, $limit, $offset),
             'file', 'key-aware-file' => $this->getFileKeys($limit, $offset),
             'database' => $this->getDatabaseKeys($limit, $offset),
             default => []
         };
+
+        // Hide Laravel's internal bookkeeping keys (e.g. the companion entries
+        // written by Cache::flexible()) so they don't clutter the listing. When
+        // enabled, $limit acts as a soft cap since these are filtered afterwards.
+        if (config('cache-ui-laravel.hide_internal_keys', true)) {
+            return $this->filterInternalKeys($keys);
+        }
+
+        return $keys;
     }
 
     /**
@@ -142,12 +163,60 @@ final class CacheUiLaravel
         return $deleted;
     }
 
+    /**
+     * Remove Laravel's internal cache bookkeeping keys from a key list.
+     *
+     * Currently this hides the companion entries written by Cache::flexible()
+     * (the "stale-while-revalidate" helper), which stores an
+     * `illuminate:cache:flexible:created:<key>` timestamp alongside each value.
+     *
+     * @param  array<string>  $keys  The raw key list to filter
+     * @return array<string> The list with internal keys removed and re-indexed
+     *
+     * @example
+     * $clean = $this->filterInternalKeys(['users', 'illuminate:cache:flexible:created:users']);
+     * // ['users']
+     */
+    private function filterInternalKeys(array $keys): array
+    {
+        return array_values(array_filter(
+            $keys,
+            static fn (string $key): bool => ! str_starts_with($key, self::FLEXIBLE_CREATED_KEY_PREFIX)
+        ));
+    }
+
+    /**
+     * Retrieve cache keys from a Redis store.
+     *
+     * Uses Redis SCAN (cursor-based, non-blocking) to remain production-safe,
+     * falling back to KEYS only if SCAN yields nothing. The configured Redis
+     * prefix is stripped from each key before the offset and limit are applied.
+     *
+     * @param  string  $store  The Redis cache store name
+     * @param  int|null  $limit  Maximum number of keys to return (null = unlimited)
+     * @param  int  $offset  Number of keys to skip before returning results
+     * @return array<string> The matching cache key names, without the Redis prefix
+     *
+     * @example
+     * $keys = $this->getRedisKeys('redis');         // All keys
+     * $page = $this->getRedisKeys('redis', 50, 50);  // 50 keys, skipping the first 50
+     */
     private function getRedisKeys(string $store, ?int $limit = null, int $offset = 0): array
     {
         try {
             $cacheStore = Cache::store($store);
             $prefix = config('database.redis.options.prefix', '');
-            $connection = $cacheStore->getStore()->connection();
+
+            $baseStore = $cacheStore->getStore();
+            if (! $baseStore instanceof RedisStore) {
+                if (config('cache-ui-laravel.enable_logging', false)) {
+                    Log::error('Cache UI: Expected a Redis store', ['store' => $store]);
+                }
+
+                return [];
+            }
+
+            $connection = $baseStore->connection();
             $keys = [];
 
             // Use SCAN instead of KEYS to avoid blocking Redis in production
@@ -220,6 +289,22 @@ final class CacheUiLaravel
         }
     }
 
+    /**
+     * Retrieve cache keys from the file cache store.
+     *
+     * Reads each cache file under the configured cache path. For entries written
+     * by the `key-aware-file` driver the real key is returned; otherwise the
+     * hashed filename is used as a fallback. Expired and unreadable files are
+     * skipped before the offset and limit are applied.
+     *
+     * @param  int|null  $limit  Maximum number of keys to return (null = unlimited)
+     * @param  int  $offset  Number of keys to skip before returning results
+     * @return array<string> The cache key names (real keys or hashed filenames)
+     *
+     * @example
+     * $keys = $this->getFileKeys();       // All file cache keys
+     * $page = $this->getFileKeys(25, 0);   // First 25 keys
+     */
     private function getFileKeys(?int $limit = null, int $offset = 0): array
     {
         try {
@@ -307,6 +392,20 @@ final class CacheUiLaravel
         }
     }
 
+    /**
+     * Retrieve cache keys from the database cache store.
+     *
+     * Reads the `key` column from the configured cache table, applying the
+     * offset and limit at the query level for efficient pagination.
+     *
+     * @param  int|null  $limit  Maximum number of keys to return (null = unlimited)
+     * @param  int  $offset  Number of keys to skip before returning results
+     * @return array<string> The cache key names stored in the database
+     *
+     * @example
+     * $keys = $this->getDatabaseKeys();        // All database cache keys
+     * $page = $this->getDatabaseKeys(100, 0);   // First 100 keys
+     */
     private function getDatabaseKeys(?int $limit = null, int $offset = 0): array
     {
         try {
@@ -334,7 +433,17 @@ final class CacheUiLaravel
     }
 
     /**
-     * Delete a file cache key by searching for the actual key in file contents
+     * Delete a file cache entry by matching the real key stored in its contents.
+     *
+     * Intended for the `key-aware-file` driver, which wraps the original key
+     * inside the cached payload. Each non-expired cache file is unserialized and
+     * its stored key compared to the given key; the first match is deleted.
+     *
+     * @param  string  $key  The original (unhashed) cache key to delete
+     * @return bool True if a matching cache file was found and deleted, false otherwise
+     *
+     * @example
+     * $deleted = $this->deleteFileKeyByKey('user_1_profile');
      */
     private function deleteFileKeyByKey(string $key): bool
     {
@@ -390,8 +499,16 @@ final class CacheUiLaravel
     }
 
     /**
-     * Delete a file cache key by filename (for legacy cache files)
-     * Handles both direct filenames and SHA1 hashed keys with directory structure
+     * Delete a file cache entry by its filename (for legacy cache files).
+     *
+     * Handles both Laravel's SHA1-hashed keys — stored under a nested
+     * `ab/cd/<hash>` directory structure — and plain, non-hashed filenames.
+     *
+     * @param  string  $filename  The cache filename or SHA1 hash to delete
+     * @return bool True if the file existed and was deleted, false otherwise
+     *
+     * @example
+     * $deleted = $this->deleteFileKeyByFilename('356a192b7913b04c54574d18c28d46e6395428ab');
      */
     private function deleteFileKeyByFilename(string $filename): bool
     {

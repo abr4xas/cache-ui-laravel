@@ -4,9 +4,6 @@ declare(strict_types=1);
 
 namespace Abr4xas\CacheUiLaravel;
 
-use Closure;
-use DateInterval;
-use DateTimeInterface;
 use Illuminate\Cache\FileStore;
 use Illuminate\Contracts\Filesystem\LockTimeoutException;
 use Illuminate\Filesystem\LockableFile;
@@ -182,82 +179,6 @@ final class KeyAwareFileStore extends FileStore
         return tap($currentValue - $value, function ($newValue) use ($key, $raw): void {
             $this->put($key, $newValue, $raw['time'] ?? 0);
         });
-    }
-
-    /**
-     * Get an item from the cache, or execute the given Closure and store the result.
-     *
-     * @param  string  $key  The cache key
-     * @param  DateTimeInterface|DateInterval|int|null  $ttl  Time to live
-     * @param  Closure  $callback  The closure to execute if key doesn't exist
-     * @return mixed The cached value or the result of the callback
-     */
-    public function remember($key, $ttl, $callback): mixed
-    {
-        $value = $this->get($key);
-
-        if ($value !== null) {
-            return $value;
-        }
-
-        $value = $callback();
-
-        $this->put($key, $value, $ttl);
-
-        return $value;
-    }
-
-    /**
-     * Get an item from the cache, or execute the given Closure and store the result forever.
-     *
-     * @param  string  $key  The cache key
-     * @param  Closure  $callback  The closure to execute if key doesn't exist
-     * @return mixed The cached value or the result of the callback
-     */
-    public function rememberForever($key, $callback): mixed
-    {
-        $value = $this->get($key);
-
-        if ($value !== null) {
-            return $value;
-        }
-
-        $value = $callback();
-
-        $this->forever($key, $value);
-
-        return $value;
-    }
-
-    /**
-     * Retrieve an item from the cache and delete it.
-     *
-     * @param  string  $key  The cache key
-     * @param  mixed  $default  Default value if key doesn't exist
-     * @return mixed The cached value or the default value
-     */
-    public function pull($key, $default = null): mixed
-    {
-        $value = $this->get($key);
-
-        if ($value !== null) {
-            $this->forget($key);
-
-            return $value;
-        }
-
-        return $default;
-    }
-
-    /**
-     * Determine if an item exists in the cache.
-     *
-     * @param  string  $key  The cache key
-     * @return bool True if the key exists, false otherwise
-     */
-    public function has($key): bool
-    {
-        return $this->get($key) !== null;
     }
 
     /**
