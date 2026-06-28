@@ -1,0 +1,26 @@
+includes:
+    - vendor/larastan/larastan/extension.neon
+
+parameters:
+    level: 6
+    paths:
+        - src
+    ignoreErrors:
+        # False positives on the Redis SCAN path. Laravel's abstract
+        # Illuminate\Redis\Connections\Connection class is annotated `@mixin \Redis`,
+        # so static analysis resolves `scan()` to the raw PhpRedis signature
+        # (`scan(string $pattern)`) instead of Laravel's overriding
+        # `PhpRedisConnection::scan($cursor, $options = [])`. The code is correct for
+        # Laravel's connection wrapper; these errors all stem from that annotation.
+        -
+            message: '#Parameter \#2 \$pattern of method Redis::scan\(\) expects string\|null, array#'
+            path: src/CacheUiLaravel.php
+        -
+            message: '#Empty array passed to foreach#'
+            path: src/CacheUiLaravel.php
+        -
+            message: '#Strict comparison using !== between string and 0 will always evaluate to true#'
+            path: src/CacheUiLaravel.php
+        -
+            message: '#Unreachable statement - code above always terminates#'
+            path: src/CacheUiLaravel.php

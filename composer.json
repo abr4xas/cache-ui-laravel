@@ -16,17 +16,18 @@
 	],
 	"minimum-stability": "stable",
 	"require": {
-		"php": "^8.3",
-		"laravel/framework": "^13.0",
-		"laravel/prompts": "^0.3.10"
+		"php": "^8.4",
+		"laravel/framework": "^13.15",
+		"laravel/prompts": "^0.3.18"
 	},
 	"require-dev": {
-		"laravel/pint": "^1.27.0",
-		"orchestra/testbench": "^11.0",
-		"pestphp/pest": "^4.3.1",
-		"pestphp/pest-plugin-type-coverage": "^4.0.3",
-		"phpstan/phpstan": "^2.1.34",
-		"rector/rector": "^2.3.2"
+		"larastan/larastan": "^3.0",
+		"laravel/pint": "^1.29.1",
+		"orchestra/testbench": "^11.1",
+		"pestphp/pest": "^4.7.2",
+		"pestphp/pest-plugin-type-coverage": "^4.0.4",
+		"phpstan/phpstan": "^2.2.2",
+		"rector/rector": "^2.4.5"
 	},
 	"autoload-dev": {
 		"psr-4": {
@@ -51,6 +52,7 @@
 		"test": [
 			"@test:refactor",
 			"@test:lint",
+			"@test:types",
 			"@test:unit"
 		]
 	},

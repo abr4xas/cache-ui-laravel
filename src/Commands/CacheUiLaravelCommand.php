@@ -40,7 +40,7 @@ final class CacheUiLaravelCommand extends Command
         $this->storeName = $this->option('store') ?? config('cache-ui-laravel.default_store') ?? config('cache.default');
 
         // Validate store name
-        if (! isset($this->storeName) || ($this->storeName === '' || $this->storeName === '0')) {
+        if ($this->storeName === '' || $this->storeName === '0') {
             error('❌ Invalid cache store name');
 
             return self::FAILURE;
@@ -213,6 +213,8 @@ final class CacheUiLaravelCommand extends Command
 
     /**
      * Export keys to a file
+     *
+     * @param  array<string>  $keys
      */
     private function exportKeys(array $keys, string $path): int
     {

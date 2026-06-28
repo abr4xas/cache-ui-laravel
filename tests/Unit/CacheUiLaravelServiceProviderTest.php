@@ -48,6 +48,11 @@ describe('CacheUiLaravelServiceProvider Tests', function (): void {
                 CacheUiLaravel::class,
                 Mockery::type('Closure')
             );
+            // register() also queues a booting callback that registers the
+            // "key-aware-file" cache driver.
+            $app->shouldReceive('booting')->once()->with(
+                Mockery::type('Closure')
+            );
 
             $serviceProvider = new CacheUiLaravelServiceProvider($app);
             $serviceProvider->register();

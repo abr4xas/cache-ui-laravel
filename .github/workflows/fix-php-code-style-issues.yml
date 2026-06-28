@@ -10,7 +10,7 @@ jobs:
       fail-fast: true
       matrix:
         os: [ubuntu-latest]
-        php: [8.3]
+        php: [8.4]
         dependency-version: [prefer-lowest, prefer-stable]
 
     name: Fix PHP code style issues P${{ matrix.php }} - ${{ matrix.os }} - ${{ matrix.dependency-version }}
