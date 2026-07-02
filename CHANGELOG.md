@@ -2,6 +2,16 @@
 
 All notable changes to `cache-ui-laravel` will be documented in this file.
 
+## v3.0.0 - 2026-07-02
+
+### What's Changed
+
+* Modernize for Laravel 13: auto-registered driver, Cache::flexible() handling, PHPStan/Larastan by @abr4xas in https://github.com/abr4xas/cache-ui-laravel/pull/23
+* Bump actions/checkout from 5 to 7 by @dependabot[bot] in https://github.com/abr4xas/cache-ui-laravel/pull/24
+* Bump actions/cache from 5 to 6 by @dependabot[bot] in https://github.com/abr4xas/cache-ui-laravel/pull/25
+
+**Full Changelog**: https://github.com/abr4xas/cache-ui-laravel/compare/v2.2.0...v3.0.0
+
 ## v2.2.0 - 2026-06-07
 
 ### What's Changed
