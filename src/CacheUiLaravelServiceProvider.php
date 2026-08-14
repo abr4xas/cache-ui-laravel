@@ -34,12 +34,18 @@ final class CacheUiLaravelServiceProvider extends ServiceProvider
         // within a "booting" callback so it is available before any service provider's
         // boot method attempts to read from the cache.
         $this->app->booting(function (): void {
+            // Mirrors Illuminate\Cache\CacheManager::createFileDriver(): the store
+            // must receive the configured serializable classes so `unserialize()`
+            // stays restricted, and the repository must receive $config so cache
+            // events carry the store name and the `events` flag is honoured.
             Cache::extend('key-aware-file', fn (Application $app, array $config): Repository => Cache::repository(
                 new KeyAwareFileStore(
                     $app->make(Filesystem::class),
                     $config['path'] ?? storage_path('framework/cache/data'),
                     $config['permission'] ?? $config['file_permission'] ?? null,
-                )->setLockDirectory($config['lock_path'] ?? null)
+                    $app['config']['cache.serializable_classes'] ?? null,
+                )->setLockDirectory($config['lock_path'] ?? null),
+                $config
             ));
         });
     }
