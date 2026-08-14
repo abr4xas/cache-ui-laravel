@@ -1,6 +1,6 @@
 ---
 name: cache-store-development
-description: Inspect and extend Laravel cache stores — enumerate keys across the file, redis and database drivers, strip cache key prefixes so a listed key can actually be deleted, subclass a Store without breaking its locks, and register a driver through Cache::extend().
+description: Inspect and extend Laravel cache stores — enumerate cache keys across the file, redis and database drivers; strip the store's key prefix when Cache::forget() deletes nothing; subclass a Store that changes the stored payload; register a driver with Cache::extend().
 ---
 
 # Cache Store Development
@@ -43,7 +43,7 @@ What each store will tell you:
 | Key prefix | `$store->getPrefix()` | `config('cache.prefix')` |
 | Redis connection | `RedisStore::connection()` | `Redis::connection()` |
 
-`DatabaseStore` has no `getTable()`. That one still comes from config — key it by the store name you resolved, `config("cache.stores.{$storeName}.table")`, never a hardcoded `"database"`.
+`DatabaseStore` has no `getTable()`. That one still comes from config — key it by the store name you resolved, `config("cache.stores.{$storeName}.table")`.
 
 ## Key prefixes
 
@@ -63,7 +63,7 @@ Which stores prefix, in Laravel 13:
 
 The prefix itself comes from `CacheManager::getPrefix($config)`, which is `$config['prefix'] ?? config('cache.prefix')`. Laravel's default `cache.prefix` is **not** empty.
 
-**The round trip is the invariant to protect:** every key you hand a user must be a key `Cache::forget()` accepts. Read a prefixed key out of storage, hand it back to `Cache::forget()`, and the prefix gets applied a second time — the delete matches nothing. `DatabaseStore::forget()` returns `true` regardless, so this fails silently. Strip the prefix on read:
+**The round trip is the invariant to protect:** every key you hand a user must be a key `Cache::forget()` accepts. Read a prefixed key out of storage, hand it back to `Cache::forget()`, and the prefix gets applied a second time — the delete matches nothing. It fails silently, because `DatabaseStore::forgetMany()` runs the `delete()` and then returns `true` unconditionally: a miss is indistinguishable from a hit, so assert the key is gone rather than reading that return value. Strip the prefix on read:
 
 ```php
 use Illuminate\Support\Str;
@@ -101,9 +101,18 @@ $prefix = $connectionPrefix.$store->getPrefix();
 
 Match the scan on `$prefix.'*'` so it stays inside this store's keyspace instead of walking everything sharing the Redis database.
 
-Terminate the scan on the cursor Redis reports, not on the cursor you started from. phpredis 6.1+ starts the iteration from `null` but reports completion as `0`, so comparing against the starting value never matches and the loop spins forever:
+Terminate the scan on the cursor Redis reports, not on the cursor you started from. phpredis 6.1+ starts the iteration from `null` but reports completion as `0`, so comparing against the starting value never matches and the loop spins until the process runs out of memory. Two exits are needed, because `PhpRedisConnection::scan()` returns `false` once the cursor comes back zero with nothing left:
 
 ```php
+do {
+    $scanResult = $connection->scan($cursor, ['match' => $prefix.'*', 'count' => 100]);
+
+    if (! is_array($scanResult)) {
+        break;
+    }
+
+    [$cursor, $scannedKeys] = $scanResult;
+    // ...collect $scannedKeys...
 } while (! in_array((string) $cursor, ['0', ''], true));
 ```
 
@@ -143,16 +152,12 @@ Cache::extend('key-aware-file', fn (Application $app, array $config): Repository
 
 Register inside an `$this->app->booting()` callback so the driver exists before any other provider's `boot()` reads from the cache.
 
-## Anti-patterns
+## Done when
 
-- Deriving a store's path, table or connection from `config()` by a hardcoded key. Ask the resolved store.
-- Branching on the configured driver string. Branch on the resolved store's class, so subclasses are covered.
-- Handing out storage-level keys. Strip the prefix so the key survives the round trip back into `Cache::forget()`.
-- Trusting a `true` from a delete. `DatabaseStore::forgetMany()` runs the `delete()` and then `return true` unconditionally, so a miss is indistinguishable from a hit — assert the key is gone rather than reading the return value.
+Both bars are met, not just the one your change touched:
 
-## Verifying the work
-
-Cover the round trip specifically, with a non-empty `cache.prefix` set, since that is the default and the case that breaks:
+- **Every key the listing returns survives the round trip** back through `Cache::forget()`, proven with a non-empty `cache.prefix` set — that is the default, and the case that breaks.
+- **Every payload-touching method on the parent store is accounted for** — `get`, `put`, `add`, `forever`, `touch`, `increment`, `decrement`, `refreshIfOwned` — each either overridden or shown to be safe unchanged.
 
 ```php
 $listed = $inspector->getAllKeys('database');
