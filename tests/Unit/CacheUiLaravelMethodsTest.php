@@ -4,9 +4,10 @@ declare(strict_types=1);
 
 use Abr4xas\CacheUiLaravel\CacheUiLaravel;
 use Illuminate\Cache\RedisStore;
+use Illuminate\Contracts\Cache\Store;
+use Illuminate\Redis\Connections\PhpRedisConnection;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Config;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
 
 describe('CacheUiLaravel Methods', function (): void {
@@ -42,6 +43,7 @@ describe('CacheUiLaravel Methods', function (): void {
 
             $mockRedisStore = Mockery::mock(RedisStore::class);
             $mockRedisStore->shouldReceive('connection')->andReturn($mockConnection);
+            $mockRedisStore->shouldReceive('getPrefix')->andReturn('');
 
             $mockRepository = Mockery::mock();
             $mockRepository->shouldReceive('getStore')->andReturn($mockRedisStore);
@@ -52,12 +54,80 @@ describe('CacheUiLaravel Methods', function (): void {
             expect($result)->toBe(['key1', 'key2']);
         });
 
+        it('strips the store prefix from the keys Redis reports', function (): void {
+            Config::set('cache.default', 'redis');
+            Config::set('cache.stores.redis.driver', 'redis');
+
+            // SCAN and KEYS return the fully prefixed key; Cache::forget() re-applies
+            // the prefix, so it has to be stripped for the round trip to work.
+            $mockConnection = Mockery::mock();
+            $mockConnection->shouldReceive('scan')
+                ->with('0', ['match' => 'myapp_cache_*', 'count' => 100])
+                ->andReturn(['0', ['myapp_cache_user_1', 'myapp_cache_user_2']]);
+
+            $mockRedisStore = Mockery::mock(RedisStore::class);
+            $mockRedisStore->shouldReceive('connection')->andReturn($mockConnection);
+            $mockRedisStore->shouldReceive('getPrefix')->andReturn('myapp_cache_');
+
+            $mockRepository = Mockery::mock();
+            $mockRepository->shouldReceive('getStore')->andReturn($mockRedisStore);
+
+            Cache::shouldReceive('store')->with('redis')->andReturn($mockRepository);
+
+            expect($this->cacheUiLaravel->getAllKeys('redis'))->toBe(['user_1', 'user_2']);
+        });
+
+        it('also strips a global prefix applied by the Redis connection', function (): void {
+            Config::set('cache.default', 'redis');
+            Config::set('cache.stores.redis.driver', 'redis');
+
+            // Connections can carry their own prefix on top of the store's one.
+            $mockConnection = Mockery::mock(PhpRedisConnection::class);
+            $mockConnection->shouldReceive('_prefix')->with('')->andReturn('conn:');
+            $mockConnection->shouldReceive('scan')
+                ->andReturn(['0', ['conn:myapp_cache_user_1']]);
+
+            $mockRedisStore = Mockery::mock(RedisStore::class);
+            $mockRedisStore->shouldReceive('connection')->andReturn($mockConnection);
+            $mockRedisStore->shouldReceive('getPrefix')->andReturn('myapp_cache_');
+
+            $mockRepository = Mockery::mock();
+            $mockRepository->shouldReceive('getStore')->andReturn($mockRedisStore);
+
+            Cache::shouldReceive('store')->with('redis')->andReturn($mockRepository);
+
+            expect($this->cacheUiLaravel->getAllKeys('redis'))->toBe(['user_1']);
+        });
+
+        it('keeps scanning across cursors and stops on a zero cursor', function (): void {
+            Config::set('cache.default', 'redis');
+            Config::set('cache.stores.redis.driver', 'redis');
+
+            // Clients report the final cursor as int 0, string '0' or null depending
+            // on version, so termination must not depend on the exact type. Getting
+            // this wrong loops forever rather than failing.
+            $mockConnection = Mockery::mock();
+            $mockConnection->shouldReceive('scan')
+                ->andReturn(['7', ['first']], [0, ['second']]);
+
+            $mockRedisStore = Mockery::mock(RedisStore::class);
+            $mockRedisStore->shouldReceive('connection')->andReturn($mockConnection);
+            $mockRedisStore->shouldReceive('getPrefix')->andReturn('');
+
+            $mockRepository = Mockery::mock();
+            $mockRepository->shouldReceive('getStore')->andReturn($mockRedisStore);
+
+            Cache::shouldReceive('store')->with('redis')->andReturn($mockRepository);
+
+            expect($this->cacheUiLaravel->getAllKeys('redis'))->toBe(['first', 'second']);
+        });
+
         it('returns an empty list when the store is not backed by Redis', function (): void {
             Config::set('cache.default', 'redis');
             Config::set('cache.stores.redis.driver', 'redis');
 
             $mockRepository = Mockery::mock();
-            $mockRepository->shouldReceive('getStore')->andReturn(Mockery::mock());
+            $mockRepository->shouldReceive('getStore')->andReturn(Mockery::mock(Store::class));
 
             Cache::shouldReceive('store')->with('redis')->andReturn($mockRepository);
 
@@ -115,15 +185,12 @@ describe('CacheUiLaravel Methods', function (): void {
         });
 
         it('handles database driver', function (): void {
-            Config::set('cache.default', 'database');
-            Config::set('cache.stores.database.driver', 'database');
-            Config::set('cache.stores.database.table', 'cache');
+            useSqliteCacheStore();
 
-            DB::shouldReceive('table')->with('cache')->andReturnSelf();
-            DB::shouldReceive('pluck')->with('key')->andReturn(collect(['key1', 'key2']));
+            Cache::store('database')->put('key1', 'a', 3600);
+            Cache::store('database')->put('key2', 'b', 3600);
 
-            $result = $this->cacheUiLaravel->getAllKeys('database');
-            expect($result)->toBe(['key1', 'key2']);
+            expect($this->cacheUiLaravel->getAllKeys('database'))->toBe(['key1', 'key2']);
         });
 
         it('uses default store when no store specified', function (): void {
@@ -138,6 +205,7 @@ describe('CacheUiLaravel Methods', function (): void {
     describe('forgetKey method', function (): void {
         it('deletes key from default store', function (): void {
             Cache::shouldReceive('store')->withNoArgs()->andReturnSelf();
+            Cache::shouldReceive('getStore')->andReturn(Mockery::mock());
             Cache::shouldReceive('forget')->with('test-key')->andReturn(true);
 
             $result = $this->cacheUiLaravel->forgetKey('test-key');
@@ -146,6 +214,7 @@ describe('CacheUiLaravel Methods', function (): void {
 
         it('deletes key from specified store', function (): void {
             Cache::shouldReceive('store')->with('redis')->andReturnSelf();
+            Cache::shouldReceive('getStore')->andReturn(Mockery::mock());
             Cache::shouldReceive('forget')->with('test-key')->andReturn(true);
 
             $result = $this->cacheUiLaravel->forgetKey('test-key', 'redis');
@@ -154,6 +223,7 @@ describe('CacheUiLaravel Methods', function (): void {
 
         it('handles empty store parameter', function (): void {
             Cache::shouldReceive('store')->withNoArgs()->andReturnSelf();
+            Cache::shouldReceive('getStore')->andReturn(Mockery::mock());
             Cache::shouldReceive('forget')->with('test-key')->andReturn(true);
 
             $result = $this->cacheUiLaravel->forgetKey('test-key', '');
@@ -162,6 +232,7 @@ describe('CacheUiLaravel Methods', function (): void {
 
         it('handles null store parameter', function (): void {
             Cache::shouldReceive('store')->withNoArgs()->andReturnSelf();
+            Cache::shouldReceive('getStore')->andReturn(Mockery::mock());
             Cache::shouldReceive('forget')->with('test-key')->andReturn(true);
 
             $result = $this->cacheUiLaravel->forgetKey('test-key');
@@ -170,6 +241,7 @@ describe('CacheUiLaravel Methods', function (): void {
 
         it('handles zero store parameter', function (): void {
             Cache::shouldReceive('store')->withNoArgs()->andReturnSelf();
+            Cache::shouldReceive('getStore')->andReturn(Mockery::mock());
             Cache::shouldReceive('forget')->with('test-key')->andReturn(true);
 
             $result = $this->cacheUiLaravel->forgetKey('test-key', '0');
@@ -178,6 +250,7 @@ describe('CacheUiLaravel Methods', function (): void {
 
         it('returns false when key deletion fails', function (): void {
             Cache::shouldReceive('store')->withNoArgs()->andReturnSelf();
+            Cache::shouldReceive('getStore')->andReturn(Mockery::mock());
             Cache::shouldReceive('forget')->with('test-key')->andReturn(false);
 
             $result = $this->cacheUiLaravel->forgetKey('test-key');
@@ -209,73 +282,47 @@ describe('CacheUiLaravel Methods', function (): void {
         });
 
         it('handles database errors gracefully', function (): void {
-            Config::set('cache.default', 'database');
-            Config::set('cache.stores.database.driver', 'database');
-            Config::set('cache.stores.database.table', 'cache');
+            // Store points at a table that was never created, so the query throws.
+            useSqliteCacheStore(createTable: false);
 
-            DB::shouldReceive('table')->with('cache')->andThrow(new Exception('Database connection failed'));
-
-            $result = $this->cacheUiLaravel->getAllKeys('database');
-            expect($result)->toBeEmpty();
+            expect($this->cacheUiLaravel->getAllKeys('database'))->toBeEmpty();
         });
     });
 
     describe('getAllKeys with pagination (offset)', function (): void {
-        it('validates negative offset to zero', function (): void {
-            Config::set('cache.default', 'database');
-            Config::set('cache.stores.database.driver', 'database');
-            Config::set('cache.stores.database.table', 'cache');
+        it('treats a negative offset as zero', function (): void {
+            useSqliteCacheStore();
 
-            $mockQuery = Mockery::mock();
-            $mockQuery->shouldReceive('pluck')->with('key')->andReturn(collect(['key1', 'key2']));
-            $mockQuery->shouldReceive('limit')->andReturnSelf();
-            $mockQuery->shouldNotReceive('offset'); // Should not be called with negative offset
+            Cache::store('database')->put('key1', 'a', 3600);
+            Cache::store('database')->put('key2', 'b', 3600);
 
-            DB::shouldReceive('table')->with('cache')->andReturn($mockQuery);
-
-            $result = $this->cacheUiLaravel->getAllKeys('database', null, -5);
-            expect($result)->toBe(['key1', 'key2']);
+            expect($this->cacheUiLaravel->getAllKeys('database', null, -5))->toBe(['key1', 'key2']);
         });
 
-        it('applies offset correctly for database driver', function (): void {
-            Config::set('cache.default', 'database');
-            Config::set('cache.stores.database.driver', 'database');
-            Config::set('cache.stores.database.table', 'cache');
+        it('applies offset and limit at the query level', function (): void {
+            useSqliteCacheStore();
 
-            $mockQuery = Mockery::mock();
-            $mockQuery->shouldReceive('offset')->with(10)->once()->andReturnSelf();
-            $mockQuery->shouldReceive('limit')->with(5)->once()->andReturnSelf();
-            $mockQuery->shouldReceive('pluck')->with('key')->andReturn(collect(['key11', 'key12', 'key13', 'key14', 'key15']));
+            for ($i = 1; $i <= 15; $i++) {
+                Cache::store('database')->put(sprintf('key%02d', $i), 'v', 3600);
+            }
 
-            DB::shouldReceive('table')->with('cache')->andReturn($mockQuery);
-
-            $result = $this->cacheUiLaravel->getAllKeys('database', 5, 10);
-            expect($result)->toHaveCount(5);
+            expect($this->cacheUiLaravel->getAllKeys('database', 5, 10))->toHaveCount(5);
         });
 
-        it('supports pagination workflow for database driver', function (): void {
-            Config::set('cache.default', 'database');
-            Config::set('cache.stores.database.driver', 'database');
-            Config::set('cache.stores.database.table', 'cache');
+        it('returns non-overlapping pages when paginating', function (): void {
+            useSqliteCacheStore();
 
-            // First page
-            $mockQuery1 = Mockery::mock();
-            $mockQuery1->shouldReceive('limit')->with(2)->andReturnSelf();
-            $mockQuery1->shouldReceive('pluck')->with('key')->andReturn(collect(['key1', 'key2']));
-
-            // Second page
-            $mockQuery2 = Mockery::mock();
-            $mockQuery2->shouldReceive('offset')->with(2)->andReturnSelf();
-            $mockQuery2->shouldReceive('limit')->with(2)->andReturnSelf();
-            $mockQuery2->shouldReceive('pluck')->with('key')->andReturn(collect(['key3', 'key4']));
-
-            DB::shouldReceive('table')->with('cache')->andReturn($mockQuery1, $mockQuery2);
+            for ($i = 1; $i <= 4; $i++) {
+                Cache::store('database')->put(sprintf('key%02d', $i), 'v', 3600);
+            }
 
             $page1 = $this->cacheUiLaravel->getAllKeys('database', 2, 0);
-            expect($page1)->toHaveCount(2);
-
             $page2 = $this->cacheUiLaravel->getAllKeys('database', 2, 2);
-            expect($page2)->toHaveCount(2);
+
+            expect($page1)->toHaveCount(2)
+                ->and($page2)->toHaveCount(2)
+                // Paging is only meaningful if the two pages are disjoint.
+                ->and(array_intersect($page1, $page2))->toBeEmpty();
         });
     });
 });

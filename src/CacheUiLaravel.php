@@ -5,9 +5,13 @@ declare(strict_types=1);
 namespace Abr4xas\CacheUiLaravel;
 
 use Exception;
+use Illuminate\Cache\DatabaseStore;
+use Illuminate\Cache\FileStore;
 use Illuminate\Cache\RedisStore;
+use Illuminate\Contracts\Cache\Store;
+use Illuminate\Redis\Connections\PhpRedisConnection;
+use Illuminate\Redis\Connections\PredisConnection;
 use Illuminate\Support\Facades\Cache;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Log;
 
@@ -78,16 +82,26 @@ final class CacheUiLaravel
             $offset = 0;
         }
 
-        $driver = config("cache.stores.{$storeName}.driver");
-
         // Use config limit if not provided
         $limit ??= config('cache-ui-laravel.keys_limit');
 
-        $keys = match ($driver) {
-            'redis' => $this->getRedisKeys($storeName, $limit, $offset),
-            'file', 'key-aware-file' => $this->getFileKeys($limit, $offset),
-            'database' => $this->getDatabaseKeys($limit, $offset),
-            default => []
+        // Resolve the store once and read the cache path, table, connection and
+        // key prefix off the store itself. Re-deriving those from config by a
+        // hardcoded path is what used to break stores not literally named "file"
+        // or "database", stores on a non-default database connection, and any
+        // non-empty cache prefix.
+        $baseStore = $this->resolveStore($storeName);
+
+        if (! $baseStore instanceof Store) {
+            return [];
+        }
+
+        $keys = match (true) {
+            $baseStore instanceof RedisStore => $this->getRedisKeys($baseStore, $limit, $offset),
+            // KeyAwareFileStore extends FileStore, so both file drivers land here.
+            $baseStore instanceof FileStore => $this->getFileKeys($baseStore, $limit, $offset),
+            $baseStore instanceof DatabaseStore => $this->getDatabaseKeys($baseStore, $storeName, $limit, $offset),
+            default => [],
         };
 
         // Hide Laravel's internal bookkeeping keys (e.g. the companion entries
@@ -144,19 +158,22 @@ final class CacheUiLaravel
             }
         }
 
-        $driver = $storeName ? config("cache.stores.{$storeName}.driver") : config('cache.default');
         $cacheStore = (in_array($store, [null, '', '0'], true)) ? Cache::store() : Cache::store($storeName);
 
         $deleted = $cacheStore->forget($key);
 
-        // For file driver, if standard forget failed, try to delete by searching for the key in files
-        if (! $deleted && ($driver === 'file' || $driver === 'key-aware-file')) {
+        // For file stores, if the standard forget failed, fall back to scanning the
+        // cache directory. The directory comes from the store rather than config so
+        // the fallback follows whichever store was actually resolved.
+        $baseStore = $cacheStore->getStore();
+
+        if (! $deleted && $baseStore instanceof FileStore) {
             // First try to find and delete by key content (for key-aware-file driver)
-            $deleted = $this->deleteFileKeyByKey($key);
+            $deleted = $this->deleteFileKeyByKey($baseStore, $key);
 
             // If that fails, try to delete by filename (handles both hashed and direct filenames)
             if (! $deleted) {
-                $deleted = $this->deleteFileKeyByFilename($key);
+                $deleted = $this->deleteFileKeyByFilename($baseStore, $key);
             }
         }
 
@@ -192,64 +209,77 @@ final class CacheUiLaravel
      * falling back to KEYS only if SCAN yields nothing. The configured Redis
      * prefix is stripped from each key before the offset and limit are applied.
      *
-     * @param  string  $store  The Redis cache store name
+     * @param  RedisStore  $store  The resolved Redis cache store
      * @param  int|null  $limit  Maximum number of keys to return (null = unlimited)
      * @param  int  $offset  Number of keys to skip before returning results
-     * @return array<string> The matching cache key names, without the Redis prefix
+     * @return array<string> The matching cache key names, with every prefix stripped
      *
      * @example
-     * $keys = $this->getRedisKeys('redis');         // All keys
-     * $page = $this->getRedisKeys('redis', 50, 50);  // 50 keys, skipping the first 50
+     * $keys = $this->getRedisKeys($store);         // All keys
+     * $page = $this->getRedisKeys($store, 50, 50);  // 50 keys, skipping the first 50
      */
-    private function getRedisKeys(string $store, ?int $limit = null, int $offset = 0): array
+    private function getRedisKeys(RedisStore $store, ?int $limit = null, int $offset = 0): array
     {
         try {
-            $cacheStore = Cache::store($store);
-            $prefix = config('database.redis.options.prefix', '');
+            $connection = $store->connection();
+            $prefix = $this->redisKeyPrefix($store);
 
-            $baseStore = $cacheStore->getStore();
-            if (! $baseStore instanceof RedisStore) {
-                if (config('cache-ui-laravel.enable_logging', false)) {
-                    Log::error('Cache UI: Expected a Redis store', ['store' => $store]);
-                }
-
-                return [];
-            }
-
-            $connection = $baseStore->connection();
             $keys = [];
-
-            // Use SCAN instead of KEYS to avoid blocking Redis in production
-            // SCAN is safer for production environments
-            $cursor = 0;
-            $scanCount = 100;
             $totalNeeded = $offset + ($limit ?? 0);
 
+            // phpredis 6.1 and later expect the iteration to start from a null
+            // cursor; older clients and Predis start from '0'. Mirrors the same
+            // decision in Illuminate\Cache\RedisStore::currentTags().
+            $cursor = $connection instanceof PhpRedisConnection
+                && version_compare((string) phpversion('redis'), '6.1.0', '>=')
+                    ? null
+                    : '0';
+
+            // Use SCAN instead of KEYS to avoid blocking Redis in production.
+            // Matching on the prefix keeps the scan to this store's own keys
+            // instead of everything sharing the Redis database.
             do {
-                $result = $connection->scan($cursor, ['match' => '*', 'count' => $scanCount]);
-                $cursor = $result[0];
-                $scannedKeys = $result[1] ?? [];
+                // Laravel's Redis Connection is annotated `@mixin \Redis`, so static
+                // analysis resolves scan() to the raw PhpRedis signature rather than
+                // PhpRedisConnection::scan($cursor, $options), which returns a
+                // [cursor, keys] pair or false. Spelling the real shape out here keeps
+                // the runtime guards below meaningful instead of "always false".
+                /** @var array{0: mixed, 1: mixed}|false $scanResult */
+                $scanResult = $connection->scan($cursor, ['match' => $prefix.'*', 'count' => 100]);
+
+                if (! is_array($scanResult)) {
+                    break;
+                }
+
+                [$cursor, $scannedKeys] = $scanResult;
+
+                if (! is_array($scannedKeys)) {
+                    break;
+                }
 
                 foreach ($scannedKeys as $key) {
-                    $keys[] = $key;
-
-                    // Stop if we've collected enough keys (offset + limit)
-                    if ($limit !== null && $limit > 0 && count($keys) >= $totalNeeded) {
-                        $cursor = 0; // Break the loop
-                        break;
-                    }
+                    $keys[] = (string) $key;
                 }
-            } while ($cursor !== 0);
 
-            // If SCAN is not available or fails, fallback to KEYS
+                // Stop once we've collected enough keys (offset + limit)
+                if ($limit !== null && $limit > 0 && count($keys) >= $totalNeeded) {
+                    break;
+                }
+
+                // Redis signals a completed iteration by handing back a zero
+                // cursor (null on phpredis 6.1+). Testing for that directly,
+                // rather than comparing against the cursor we started from,
+                // keeps the loop terminating whichever client is in play.
+            } while (! in_array((string) $cursor, ['0', ''], true));
+
+            // If SCAN is not available or yields nothing, fall back to KEYS
             if ($keys === []) {
                 try {
-                    $allKeys = $connection->keys('*');
-                    $keys = $allKeys;
+                    $keys = array_map(strval(...), (array) $connection->keys($prefix.'*'));
                 } catch (Exception $e) {
                     if (config('cache-ui-laravel.enable_logging', false)) {
                         Log::warning('Cache UI: Failed to get Redis keys using KEYS fallback', [
-                            'store' => $store,
+                            'store' => $store->getPrefix(),
                             'error' => $e->getMessage(),
                         ]);
                     }
@@ -258,14 +288,12 @@ final class CacheUiLaravel
                 }
             }
 
-            // Remove prefix from keys
-            $keys = array_map(function ($key) use ($prefix) {
-                if ($prefix && str_starts_with((string) $key, (string) $prefix)) {
-                    return mb_substr((string) $key, mb_strlen((string) $prefix));
-                }
-
-                return $key;
-            }, $keys);
+            $keys = array_map(
+                static fn (string $key): string => $prefix !== '' && str_starts_with($key, $prefix)
+                    ? mb_substr($key, mb_strlen($prefix))
+                    : $key,
+                $keys
+            );
 
             // Apply offset and limit
             if ($offset > 0) {
@@ -280,12 +308,59 @@ final class CacheUiLaravel
         } catch (Exception $e) {
             if (config('cache-ui-laravel.enable_logging', false)) {
                 Log::error('Cache UI: Error getting Redis keys', [
-                    'store' => $store,
                     'error' => $e->getMessage(),
                 ]);
             }
 
             return [];
+        }
+    }
+
+    /**
+     * Build the full key prefix that Redis SCAN and KEYS results carry.
+     *
+     * Two prefixes stack up on a Redis cache key: the cache store's own prefix
+     * (from `cache.prefix`) and any global prefix the Redis connection applies
+     * on top of it. SCAN and KEYS return the fully prefixed key, so both have to
+     * come off again before the key is usable with Cache::forget().
+     *
+     * Mirrors the prefix computation in Illuminate\Cache\RedisStore::currentTags().
+     *
+     * @param  RedisStore  $store  The resolved Redis cache store
+     * @return string The concatenated connection and store prefix
+     */
+    private function redisKeyPrefix(RedisStore $store): string
+    {
+        $connection = $store->connection();
+
+        $connectionPrefix = match (true) {
+            $connection instanceof PhpRedisConnection => $connection->_prefix(''),
+            $connection instanceof PredisConnection => (string) ($connection->getOptions()->prefix ?: ''),
+            default => '',
+        };
+
+        return $connectionPrefix.$store->getPrefix();
+    }
+
+    /**
+     * Resolve a cache store by name, returning null if it cannot be built.
+     *
+     * @param  string  $storeName  The cache store name
+     * @return Store|null The resolved store, or null on failure
+     */
+    private function resolveStore(string $storeName): ?Store
+    {
+        try {
+            return Cache::store($storeName)->getStore();
+        } catch (Exception $e) {
+            if (config('cache-ui-laravel.enable_logging', false)) {
+                Log::error('Cache UI: Could not resolve cache store', [
+                    'store' => $storeName,
+                    'error' => $e->getMessage(),
+                ]);
+            }
+
+            return null;
         }
     }
 
@@ -297,18 +372,19 @@ final class CacheUiLaravel
      * hashed filename is used as a fallback. Expired and unreadable files are
      * skipped before the offset and limit are applied.
      *
+     * @param  FileStore  $store  The resolved file cache store
      * @param  int|null  $limit  Maximum number of keys to return (null = unlimited)
      * @param  int  $offset  Number of keys to skip before returning results
      * @return array<string> The cache key names (real keys or hashed filenames)
      *
      * @example
-     * $keys = $this->getFileKeys();       // All file cache keys
-     * $page = $this->getFileKeys(25, 0);   // First 25 keys
+     * $keys = $this->getFileKeys($store);       // All file cache keys
+     * $page = $this->getFileKeys($store, 25, 0); // First 25 keys
      */
-    private function getFileKeys(?int $limit = null, int $offset = 0): array
+    private function getFileKeys(FileStore $store, ?int $limit = null, int $offset = 0): array
     {
         try {
-            $cachePath = config('cache.stores.file.path', storage_path('framework/cache/data'));
+            $cachePath = $store->getDirectory();
 
             if (! File::exists($cachePath)) {
                 return [];
@@ -333,7 +409,9 @@ final class CacheUiLaravel
                                 continue;
                             }
 
-                            $data = unserialize(mb_substr($contents, 10));
+                            // Only the wrapped key is needed here, never the value,
+                            // so refuse to revive objects while listing.
+                            $data = unserialize(mb_substr($contents, 10), ['allowed_classes' => false]);
 
                             // Check if it's our wrapped format with the key
                             if (is_array($data) && isset($data['key'])) {
@@ -398,19 +476,24 @@ final class CacheUiLaravel
      * Reads the `key` column from the configured cache table, applying the
      * offset and limit at the query level for efficient pagination.
      *
+     * @param  DatabaseStore  $store  The resolved database cache store
+     * @param  string  $storeName  The cache store name, used to look up its table
      * @param  int|null  $limit  Maximum number of keys to return (null = unlimited)
      * @param  int  $offset  Number of keys to skip before returning results
-     * @return array<string> The cache key names stored in the database
+     * @return array<string> The cache key names, with the store prefix stripped
      *
      * @example
-     * $keys = $this->getDatabaseKeys();        // All database cache keys
-     * $page = $this->getDatabaseKeys(100, 0);   // First 100 keys
+     * $keys = $this->getDatabaseKeys($store, 'database');        // All database cache keys
+     * $page = $this->getDatabaseKeys($store, 'database', 100, 0); // First 100 keys
      */
-    private function getDatabaseKeys(?int $limit = null, int $offset = 0): array
+    private function getDatabaseKeys(DatabaseStore $store, string $storeName, ?int $limit = null, int $offset = 0): array
     {
         try {
-            $table = config('cache.stores.database.table', 'cache');
-            $query = DB::table($table);
+            // DatabaseStore exposes its connection and prefix but not its table,
+            // so the table still comes from config -- keyed by the store that was
+            // actually resolved rather than a hardcoded "database".
+            $table = config("cache.stores.{$storeName}.table", 'cache');
+            $query = $store->getConnection()->table($table);
 
             if ($offset > 0) {
                 $query->offset($offset);
@@ -420,7 +503,17 @@ final class CacheUiLaravel
                 $query->limit($limit);
             }
 
-            return $query->pluck('key')->toArray();
+            $prefix = $store->getPrefix();
+
+            // The key column holds the prefixed key. Cache::forget() re-applies the
+            // prefix, so it has to come off here or the round trip double-prefixes
+            // and silently deletes nothing.
+            return array_values(array_map(
+                static fn ($key): string => $prefix !== '' && str_starts_with((string) $key, $prefix)
+                    ? mb_substr((string) $key, mb_strlen($prefix))
+                    : (string) $key,
+                $query->pluck('key')->toArray()
+            ));
         } catch (Exception $e) {
             if (config('cache-ui-laravel.enable_logging', false)) {
                 Log::error('Cache UI: Error getting database cache keys', [
@@ -439,16 +532,17 @@ final class CacheUiLaravel
      * inside the cached payload. Each non-expired cache file is unserialized and
      * its stored key compared to the given key; the first match is deleted.
      *
+     * @param  FileStore  $store  The resolved file cache store
      * @param  string  $key  The original (unhashed) cache key to delete
      * @return bool True if a matching cache file was found and deleted, false otherwise
      *
      * @example
-     * $deleted = $this->deleteFileKeyByKey('user_1_profile');
+     * $deleted = $this->deleteFileKeyByKey($store, 'user_1_profile');
      */
-    private function deleteFileKeyByKey(string $key): bool
+    private function deleteFileKeyByKey(FileStore $store, string $key): bool
     {
         try {
-            $cachePath = config('cache.stores.file.path', storage_path('framework/cache/data'));
+            $cachePath = $store->getDirectory();
 
             if (! File::exists($cachePath)) {
                 return false;
@@ -475,7 +569,8 @@ final class CacheUiLaravel
                     $serialized = mb_substr($content, 10);
 
                     // Try to unserialize to get the data
-                    $data = unserialize($serialized);
+                    // Only the wrapped key is compared, never the value.
+                    $data = unserialize($serialized, ['allowed_classes' => false]);
                     if (is_array($data) && isset($data['key']) && $data['key'] === $key) {
                         return File::delete($file->getPathname());
                     }
@@ -504,16 +599,17 @@ final class CacheUiLaravel
      * Handles both Laravel's SHA1-hashed keys — stored under a nested
      * `ab/cd/<hash>` directory structure — and plain, non-hashed filenames.
      *
+     * @param  FileStore  $store  The resolved file cache store
      * @param  string  $filename  The cache filename or SHA1 hash to delete
      * @return bool True if the file existed and was deleted, false otherwise
      *
      * @example
-     * $deleted = $this->deleteFileKeyByFilename('356a192b7913b04c54574d18c28d46e6395428ab');
+     * $deleted = $this->deleteFileKeyByFilename($store, '356a192b7913b04c54574d18c28d46e6395428ab');
      */
-    private function deleteFileKeyByFilename(string $filename): bool
+    private function deleteFileKeyByFilename(FileStore $store, string $filename): bool
     {
         try {
-            $cachePath = config('cache.stores.file.path', storage_path('framework/cache/data'));
+            $cachePath = $store->getDirectory();
 
             // Check if filename is a SHA1 hash (40 hex characters)
             // Laravel stores hashed keys in directory structure: first 2 chars / next 2 chars / full hash

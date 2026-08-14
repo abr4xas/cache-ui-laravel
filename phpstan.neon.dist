@@ -24,12 +24,9 @@ parameters:
         -
             message: '#Parameter \#2 \$pattern of method Redis::scan\(\) expects string\|null, array#'
             path: src/CacheUiLaravel.php
+        # PredisConnection forwards getOptions() to the underlying Predis client
+        # through __call(), so it has no declared method for PHPStan to find.
+        # Illuminate\Cache\RedisStore::currentTags() calls it the same way.
         -
-            message: '#Empty array passed to foreach#'
-            path: src/CacheUiLaravel.php
-        -
-            message: '#Strict comparison using !== between string and 0 will always evaluate to true#'
-            path: src/CacheUiLaravel.php
-        -
-            message: '#Unreachable statement - code above always terminates#'
+            message: '#Call to an undefined method Illuminate\\Redis\\Connections\\PredisConnection::getOptions\(\)#'
             path: src/CacheUiLaravel.php

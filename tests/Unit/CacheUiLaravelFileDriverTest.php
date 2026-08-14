@@ -7,218 +7,118 @@ use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\File;
 
+/**
+ * forgetKey() falls back to scanning the cache directory when Cache::forget()
+ * cannot find the key by its hashed path. These tests drive that fallback with
+ * real files on disk rather than mocked File facade calls, so they assert what
+ * actually happened to the filesystem instead of which methods were called.
+ */
 describe('CacheUiLaravel File Driver Tests', function (): void {
     beforeEach(function (): void {
         $this->cacheUiLaravel = new CacheUiLaravel();
+        $this->cachePath = sys_get_temp_dir().'/cache-ui-laravel-test/file-driver-'.getmypid();
+
+        File::deleteDirectory($this->cachePath);
+        File::makeDirectory($this->cachePath, 0755, true);
+
+        Config::set('cache.stores.filetest', [
+            'driver' => 'key-aware-file',
+            'path' => $this->cachePath,
+        ]);
+        Cache::purge('filetest');
     });
 
-    describe('forgetKey with file driver', function (): void {
-        it('successfully deletes a key from file cache by key content', function (): void {
-            Config::set('cache.default', 'file');
-            Config::set('cache.stores.file.driver', 'key-aware-file');
-            Config::set('cache.stores.file.path', storage_path('framework/cache/data'));
+    afterEach(function (): void {
+        File::deleteDirectory($this->cachePath);
+    });
 
-            $cachePath = storage_path('framework/cache/data');
-            $testKey = 'test-cache-key';
-            $mockFile = Mockery::mock();
-            $mockFile->shouldReceive('getPathname')->andReturn($cachePath.'/test-file');
+    /**
+     * Write a cache file by hand at a path that deliberately does not match
+     * sha1($key), so Cache::forget() misses it and the fallback has to run.
+     */
+    $writeCacheFile = function (string $path, string $key, mixed $value = 'test-value'): void {
+        File::ensureDirectoryExists(dirname($path));
+        File::put($path, (time() + 3600).serialize(['key' => $key, 'value' => $value]));
+    };
 
-            // Mock File::exists for deleteFileKeyByKey (checking cache directory)
-            File::shouldReceive('exists')->with($cachePath)->once()->andReturn(true);
-            // Mock File::allFiles to return a file
-            File::shouldReceive('allFiles')->with($cachePath)->once()->andReturn([$mockFile]);
-            // Mock File::get to return wrapped data with the key
-            $wrappedData = serialize(['key' => $testKey, 'value' => 'test-value']);
-            $expiration = time() + 3600;
-            File::shouldReceive('get')->with($cachePath.'/test-file')->once()->andReturn($expiration.$wrappedData);
-            // Mock File::delete to return true
-            File::shouldReceive('delete')->with($cachePath.'/test-file')->once()->andReturn(true);
+    describe('forgetKey with file driver', function () use ($writeCacheFile): void {
+        it('deletes a cache file by the key recorded in its contents', function () use ($writeCacheFile): void {
+            $orphan = $this->cachePath.'/zz/zz/orphaned-file';
+            $writeCacheFile($orphan, 'test-cache-key');
 
-            // Mock Cache facade for store validation
-            $mockStore = Mockery::mock();
-            $mockStore->shouldReceive('forget')->with($testKey)->andReturn(false);
-            Cache::shouldReceive('store')->with('file')->andReturn($mockStore);
-
-            $result = $this->cacheUiLaravel->forgetKey($testKey, 'file');
-            expect($result)->toBeTrue();
+            expect($this->cacheUiLaravel->forgetKey('test-cache-key', 'filetest'))->toBeTrue()
+                ->and(File::exists($orphan))->toBeFalse();
         });
 
-        it('successfully deletes a key from file cache by filename when key search fails', function (): void {
-            Config::set('cache.default', 'file');
-            Config::set('cache.stores.file.driver', 'key-aware-file');
-            Config::set('cache.stores.file.path', storage_path('framework/cache/data'));
+        it('deletes by filename when no file records a matching key', function () use ($writeCacheFile): void {
+            $decoy = $this->cachePath.'/zz/zz/decoy';
+            $writeCacheFile($decoy, 'some-other-key');
 
-            $cachePath = storage_path('framework/cache/data');
-            $testKey = 'legacy-filename-key';
-            $mockFile = Mockery::mock();
-            $mockFile->shouldReceive('getPathname')->andReturn($cachePath.'/test-file');
+            $legacy = $this->cachePath.'/legacy-filename-key';
+            $writeCacheFile($legacy, 'some-other-key');
 
-            // First call: deleteFileKeyByKey - check directory exists
-            File::shouldReceive('exists')->with($cachePath)->once()->andReturn(true);
-            // Mock File::allFiles to return a file
-            File::shouldReceive('allFiles')->with($cachePath)->once()->andReturn([$mockFile]);
-            // Mock File::get to return data without matching key
-            $wrappedData = serialize(['key' => 'other-key', 'value' => 'test-value']);
-            $expiration = time() + 3600;
-            File::shouldReceive('get')->with($cachePath.'/test-file')->once()->andReturn($expiration.$wrappedData);
-
-            // Second call: deleteFileKeyByFilename - check file exists
-            $filePath = $cachePath.'/'.$testKey;
-            File::shouldReceive('exists')->with($filePath)->once()->andReturn(true);
-            // Mock File::delete to return true
-            File::shouldReceive('delete')->with($filePath)->once()->andReturn(true);
-
-            // Mock Cache facade for store validation
-            $mockStore = Mockery::mock();
-            $mockStore->shouldReceive('forget')->with($testKey)->andReturn(false);
-            Cache::shouldReceive('store')->with('file')->andReturn($mockStore);
-
-            $result = $this->cacheUiLaravel->forgetKey($testKey, 'file');
-            expect($result)->toBeTrue();
+            expect($this->cacheUiLaravel->forgetKey('legacy-filename-key', 'filetest'))->toBeTrue()
+                ->and(File::exists($legacy))->toBeFalse()
+                // The decoy records a different key, so it must survive.
+                ->and(File::exists($decoy))->toBeTrue();
         });
 
-        it('returns false when file cache directory does not exist', function (): void {
-            Config::set('cache.default', 'file');
-            Config::set('cache.stores.file.driver', 'key-aware-file');
-            Config::set('cache.stores.file.path', storage_path('framework/cache/data'));
+        it('returns false when the cache directory does not exist', function (): void {
+            Config::set('cache.stores.filetest.path', $this->cachePath.'/nonexistent');
+            Cache::purge('filetest');
 
-            $cachePath = storage_path('framework/cache/data');
-            $testKey = 'test-key';
-
-            // Mock File::exists to return false (directory doesn't exist)
-            File::shouldReceive('exists')->with($cachePath)->once()->andReturn(false);
-
-            // Mock Cache facade for store validation
-            $mockStore = Mockery::mock();
-            $mockStore->shouldReceive('forget')->with($testKey)->andReturn(false);
-            Cache::shouldReceive('store')->with('file')->andReturn($mockStore);
-
-            $result = $this->cacheUiLaravel->forgetKey($testKey, 'file');
-            expect($result)->toBeFalse();
+            expect($this->cacheUiLaravel->forgetKey('test-key', 'filetest'))->toBeFalse();
         });
 
-        it('returns false when key is not found in file cache', function (): void {
-            Config::set('cache.default', 'file');
-            Config::set('cache.stores.file.driver', 'key-aware-file');
-            Config::set('cache.stores.file.path', storage_path('framework/cache/data'));
+        it('returns false when the key is nowhere in the cache directory', function () use ($writeCacheFile): void {
+            $decoy = $this->cachePath.'/zz/zz/decoy';
+            $writeCacheFile($decoy, 'some-other-key');
 
-            $cachePath = storage_path('framework/cache/data');
-            $testKey = 'non-existent-key';
-            $mockFile = Mockery::mock();
-            $mockFile->shouldReceive('getPathname')->andReturn($cachePath.'/test-file');
-
-            // First call: deleteFileKeyByKey - check directory exists
-            File::shouldReceive('exists')->with($cachePath)->once()->andReturn(true);
-            // Mock File::allFiles to return a file
-            File::shouldReceive('allFiles')->with($cachePath)->once()->andReturn([$mockFile]);
-            // Mock File::get to return data without matching key
-            $wrappedData = serialize(['key' => 'other-key', 'value' => 'test-value']);
-            $expiration = time() + 3600;
-            File::shouldReceive('get')->with($cachePath.'/test-file')->once()->andReturn($expiration.$wrappedData);
-
-            // Second call: deleteFileKeyByFilename - check file exists (should return false)
-            $filePath = $cachePath.'/'.$testKey;
-            File::shouldReceive('exists')->with($filePath)->once()->andReturn(false);
-
-            // Mock Cache facade for store validation
-            $mockStore = Mockery::mock();
-            $mockStore->shouldReceive('forget')->with($testKey)->andReturn(false);
-            Cache::shouldReceive('store')->with('file')->andReturn($mockStore);
-
-            $result = $this->cacheUiLaravel->forgetKey($testKey, 'file');
-            expect($result)->toBeFalse();
+            expect($this->cacheUiLaravel->forgetKey('non-existent-key', 'filetest'))->toBeFalse()
+                ->and(File::exists($decoy))->toBeTrue();
         });
     });
 
     describe('hashed file deletion', function (): void {
-        it('deletes hashed file when standard forget fails for file driver', function (): void {
-            // Mock Cache::forget to return false, simulating that it couldn't find the key by name
-            Cache::shouldReceive('store')->withNoArgs()->andReturnSelf();
-            Cache::shouldReceive('forget')->with('008cb7ea48f292dd8b03d361a4c9f66085f77090')->andReturn(false);
+        // Laravel nests hashed keys as <first two>/<next two>/<full hash>.
+        $hash = '008cb7ea48f292dd8b03d361a4c9f66085f77090';
 
-            // Configure file driver
-            Config::set('cache.default', 'file');
-            Config::set('cache.stores.file.driver', 'file');
-            $cachePath = storage_path('framework/cache/data');
-            Config::set('cache.stores.file.path', $cachePath);
+        it('deletes a hashed file whose name is passed as the key', function () use ($hash): void {
+            $hashedPath = $this->cachePath.'/00/8c/'.$hash;
+            File::ensureDirectoryExists(dirname($hashedPath));
+            File::put($hashedPath, (time() + 3600).serialize('legacy-unwrapped-value'));
 
-            // The key is a SHA1 hash
-            $key = '008cb7ea48f292dd8b03d361a4c9f66085f77090';
-
-            // Expected file path reconstruction
-            // 00/8c/008cb7ea48f292dd8b03d361a4c9f66085f77090
-            $expectedPath = $cachePath.'/00/8c/'.$key;
-
-            // Mock File existence and deletion
-            File::shouldReceive('exists')->with($expectedPath)->andReturn(true);
-            File::shouldReceive('delete')->with($expectedPath)->andReturn(true);
-
-            $result = $this->cacheUiLaravel->forgetKey($key);
-
-            expect($result)->toBeTrue();
+            expect($this->cacheUiLaravel->forgetKey($hash, 'filetest'))->toBeTrue()
+                ->and(File::exists($hashedPath))->toBeFalse();
         });
 
-        it('deletes hashed file when standard forget fails for key-aware-file driver', function (): void {
-            // Mock Cache::forget to return false
-            Cache::shouldReceive('store')->withNoArgs()->andReturnSelf();
-            Cache::shouldReceive('forget')->with('008cb7ea48f292dd8b03d361a4c9f66085f77090')->andReturn(false);
+        it('behaves the same for the plain file driver', function () use ($hash): void {
+            Config::set('cache.stores.filetest.driver', 'file');
+            Cache::purge('filetest');
 
-            // Configure key-aware-file driver
-            Config::set('cache.default', 'file');
-            Config::set('cache.stores.file.driver', 'key-aware-file');
-            $cachePath = storage_path('framework/cache/data');
-            Config::set('cache.stores.file.path', $cachePath);
+            $hashedPath = $this->cachePath.'/00/8c/'.$hash;
+            File::ensureDirectoryExists(dirname($hashedPath));
+            File::put($hashedPath, (time() + 3600).serialize('legacy-unwrapped-value'));
 
-            $key = '008cb7ea48f292dd8b03d361a4c9f66085f77090';
-            $expectedPath = $cachePath.'/00/8c/'.$key;
-
-            File::shouldReceive('exists')->with($expectedPath)->andReturn(true);
-            File::shouldReceive('delete')->with($expectedPath)->andReturn(true);
-
-            $result = $this->cacheUiLaravel->forgetKey($key);
-
-            expect($result)->toBeTrue();
+            expect($this->cacheUiLaravel->forgetKey($hash, 'filetest'))->toBeTrue()
+                ->and(File::exists($hashedPath))->toBeFalse();
         });
 
-        it('does not attempt file deletion by filename for non-hashed keys', function (): void {
-            Cache::shouldReceive('store')->withNoArgs()->andReturnSelf();
-            Cache::shouldReceive('forget')->with('not-a-hash')->andReturn(false);
-
-            Config::set('cache.default', 'file');
-            Config::set('cache.stores.file.driver', 'file');
-            $cachePath = storage_path('framework/cache/data');
-            Config::set('cache.stores.file.path', $cachePath);
-
-            // deleteFileKeyByKey will be called and check directory exists, but won't find the key
-            File::shouldReceive('exists')->with($cachePath)->once()->andReturn(true);
-            File::shouldReceive('allFiles')->with($cachePath)->once()->andReturn([]);
-            // deleteFileKeyByFilename will be called but won't find the file (not a hash, direct path doesn't exist)
-            $filePath = $cachePath.'/not-a-hash';
-            File::shouldReceive('exists')->with($filePath)->once()->andReturn(false);
-
-            $result = $this->cacheUiLaravel->forgetKey('not-a-hash');
-
-            expect($result)->toBeFalse();
+        it('does not reconstruct a hashed path for a non-hashed key', function (): void {
+            expect($this->cacheUiLaravel->forgetKey('not-a-hash', 'filetest'))->toBeFalse();
         });
 
-        it('does not attempt file deletion for non-file drivers', function (): void {
-            Cache::shouldReceive('store')->withNoArgs()->andReturnSelf();
-            Cache::shouldReceive('forget')->with('008cb7ea48f292dd8b03d361a4c9f66085f77090')->andReturn(false);
+        it('leaves cache files alone for stores that are not file backed', function () use ($hash): void {
+            Config::set('cache.stores.arraytest', ['driver' => 'array']);
 
-            Config::set('cache.default', 'redis');
-            Config::set('cache.stores.redis.driver', 'redis');
+            // A file sitting at the hashed path the fallback would have targeted.
+            $hashedPath = $this->cachePath.'/00/8c/'.$hash;
+            File::ensureDirectoryExists(dirname($hashedPath));
+            File::put($hashedPath, (time() + 3600).serialize(['key' => $hash, 'value' => 'v']));
 
-            // File::exists/delete should NOT be called
-            File::shouldReceive('exists')->never();
-            File::shouldReceive('delete')->never();
-
-            $result = $this->cacheUiLaravel->forgetKey('008cb7ea48f292dd8b03d361a4c9f66085f77090');
-
-            expect($result)->toBeFalse();
+            expect($this->cacheUiLaravel->forgetKey($hash, 'arraytest'))->toBeFalse()
+                // An array store must never trigger the filesystem fallback.
+                ->and(File::exists($hashedPath))->toBeTrue();
         });
     });
-});
-
-afterEach(function (): void {
-    Mockery::close();
 });
