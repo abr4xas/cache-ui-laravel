@@ -65,8 +65,8 @@ describe('KeyAwareFileStore Edge Cases', function (): void {
             expect($result)->toBeTrue();
 
             $value = $this->keyAwareFileStore->get('large-string-key');
-            expect($value)->toBe($largeValue);
-            expect(mb_strlen($value))->toBe(100000);
+            expect($value)->toBe($largeValue)
+                ->and($value)->toHaveLength(100000);
         });
 
         it('handles very large array values', function (): void {
@@ -79,8 +79,8 @@ describe('KeyAwareFileStore Edge Cases', function (): void {
             expect($result)->toBeTrue();
 
             $value = $this->keyAwareFileStore->get('large-array-key');
-            expect($value)->toBeArray();
-            expect(count($value))->toBe(10000);
+            expect($value)->toBeArray()
+                ->and($value)->toHaveCount(10000);
         });
     });
 
@@ -150,14 +150,14 @@ describe('KeyAwareFileStore Edge Cases', function (): void {
             $result1 = $this->keyAwareFileStore->put($keyWithNewline, 'value1', 3600);
             $result2 = $this->keyAwareFileStore->put($keyWithTab, 'value2', 3600);
 
-            expect($result1)->toBeTrue();
-            expect($result2)->toBeTrue();
+            expect($result1)->toBeTrue()
+                ->and($result2)->toBeTrue();
 
             $value1 = $this->keyAwareFileStore->get($keyWithNewline);
             $value2 = $this->keyAwareFileStore->get($keyWithTab);
 
-            expect($value1)->toBe('value1');
-            expect($value2)->toBe('value2');
+            expect($value1)->toBe('value1')
+                ->and($value2)->toBe('value2');
         });
     });
 
@@ -253,8 +253,8 @@ describe('KeyAwareFileStore Edge Cases', function (): void {
 
             $store = new KeyAwareFileStore($this->files, $missingPath);
             $result = $store->put('missing-dir-key', 'value', 3600);
-            expect($result)->toBeTrue();
-            expect($this->files->exists($missingPath))->toBeTrue();
+            expect($result)->toBeTrue()
+                ->and($this->files->exists($missingPath))->toBeTrue();
 
             // Cleanup
             $this->files->deleteDirectory($missingPath);

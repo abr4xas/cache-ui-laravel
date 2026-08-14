@@ -31,8 +31,8 @@ describe('CacheUiLaravel Facade Tests', function (): void {
             $reflection = new ReflectionClass(CacheUiLaravel::class);
             $method = $reflection->getMethod('getFacadeAccessor');
 
-            expect($method->isProtected())->toBeTrue();
-            expect($method->isStatic())->toBeTrue();
+            expect($method->isProtected())->toBeTrue()
+                ->and($method->isStatic())->toBeTrue();
         });
     });
 
@@ -41,8 +41,8 @@ describe('CacheUiLaravel Facade Tests', function (): void {
             $reflection = new ReflectionClass(CacheUiLaravel::class);
             $docComment = $reflection->getDocComment();
 
-            expect($docComment)->toContain('@see');
-            expect($docComment)->toContain('CacheUiLaravel');
+            expect($docComment)->toContain('@see')
+                ->toContain('CacheUiLaravel');
         });
     });
 });

@@ -10,9 +10,9 @@ describe('CacheUiLaravelCommand Method Tests', function (): void {
             $command = new CacheUiLaravelCommand();
             $reflection = new ReflectionClass($command);
 
-            expect($reflection->hasProperty('driver'))->toBeTrue();
-            expect($reflection->hasProperty('storeName'))->toBeTrue();
-            expect($reflection->hasProperty('cacheUiLaravel'))->toBeTrue();
+            expect($reflection->hasProperty('driver'))->toBeTrue()
+                ->and($reflection->hasProperty('storeName'))->toBeTrue()
+                ->and($reflection->hasProperty('cacheUiLaravel'))->toBeTrue();
         });
 
         it('has helper methods for display', function (): void {
@@ -71,13 +71,6 @@ describe('CacheUiLaravelCommand Method Tests', function (): void {
                 'stats_shows_by_year',
                 'stats_frequent_guests',
             ]);
-
-            // Critical test: Verify that values are strings, not integers
-            // This ensures search() will return the key name, not the index
-            foreach ($reindexedFilteredKeys as $key) {
-                expect($key)->toBeString();
-                expect(is_int($key))->toBeFalse();
-            }
         });
 
         it('ensures regex filtered arrays have sequential indices', function (): void {
@@ -102,12 +95,7 @@ describe('CacheUiLaravelCommand Method Tests', function (): void {
                 'home_count',
                 'home_videos',
                 'home_band',
-            ]);
-
-            // Verify all values are strings
-            foreach ($reindexed as $key) {
-                expect($key)->toBeString();
-            }
+            ])->each->toBeString();
         });
     });
 });

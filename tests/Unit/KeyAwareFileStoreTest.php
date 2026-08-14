@@ -73,8 +73,8 @@ describe('KeyAwareFileStore Complete Tests', function (): void {
             expect($result)->toBeTrue();
 
             $value = $this->keyAwareFileStore->get('object-key');
-            expect($value)->toBeInstanceOf(stdClass::class);
-            expect($value->property)->toBe('value');
+            expect($value)->toBeInstanceOf(stdClass::class)
+                ->and($value->property)->toBe('value');
         });
 
         it('handles zero expiration time', function (): void {
@@ -280,8 +280,8 @@ describe('KeyAwareFileStore Complete Tests', function (): void {
 
             $nestedStore = new KeyAwareFileStore($this->files, $nestedPath);
             $result = $nestedStore->put('nested-key', 'nested-value', 3600);
-            expect($result)->toBeTrue();
-            expect($this->files->exists($nestedPath))->toBeTrue();
+            expect($result)->toBeTrue()
+                ->and($this->files->exists($nestedPath))->toBeTrue();
 
             // Cleanup
             $this->files->deleteDirectory($nestedBase);
@@ -329,8 +329,8 @@ describe('KeyAwareFileStore Complete Tests', function (): void {
             expect($result)->toBeTrue();
 
             $value = $this->keyAwareFileStore->get('large-key');
-            expect($value)->toBe($largeValue);
-            expect(mb_strlen($value))->toBe(10000);
+            expect($value)->toBe($largeValue)
+                ->and($value)->toHaveLength(10000);
         });
 
         it('handles large array values', function (): void {
@@ -343,8 +343,8 @@ describe('KeyAwareFileStore Complete Tests', function (): void {
             expect($result)->toBeTrue();
 
             $value = $this->keyAwareFileStore->get('large-array-key');
-            expect($value)->toBeArray();
-            expect(count($value))->toBe(1000);
+            expect($value)->toBeArray()
+                ->and($value)->toHaveCount(1000);
         });
     });
 });

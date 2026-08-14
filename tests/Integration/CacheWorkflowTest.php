@@ -40,14 +40,14 @@ describe('Cache Workflow Integration Tests', function (): void {
 
             // Get all keys
             $keys = $this->cacheUiLaravel->getAllKeys('file');
-            expect($keys)->toContain('workflow-key-1');
-            expect($keys)->toContain('workflow-key-2');
-            expect($keys)->toContain('workflow-key-3');
+            expect($keys)->toContain('workflow-key-1')
+                ->toContain('workflow-key-2')
+                ->toContain('workflow-key-3');
 
             // Verify values
             expect(Cache::get('workflow-key-1'))->toBe('value-1');
-            expect(Cache::get('workflow-key-2'))->toBe('value-2');
-            expect(Cache::get('workflow-key-3'))->toBe('value-3');
+            expect(Cache::get('workflow-key-2'))->toBe('value-2')
+                ->and(Cache::get('workflow-key-3'))->toBe('value-3');
 
             // Delete one key
             $deleted = $this->cacheUiLaravel->forgetKey('workflow-key-2', 'file');
@@ -55,9 +55,8 @@ describe('Cache Workflow Integration Tests', function (): void {
 
             // Verify deletion
             $keysAfterDelete = $this->cacheUiLaravel->getAllKeys('file');
-            expect($keysAfterDelete)->toContain('workflow-key-1');
-            expect($keysAfterDelete)->not->toContain('workflow-key-2');
-            expect($keysAfterDelete)->toContain('workflow-key-3');
+            expect($keysAfterDelete)->toContain('workflow-key-1')->not->toContain('workflow-key-2')
+                ->toContain('workflow-key-3');
 
             // Verify value is gone
             expect(Cache::get('workflow-key-2'))->toBeNull();
@@ -75,18 +74,18 @@ describe('Cache Workflow Integration Tests', function (): void {
 
             // All keys should be present initially
             $keys = $this->cacheUiLaravel->getAllKeys('file');
-            expect($keys)->toContain('short-exp-key');
-            expect($keys)->toContain('long-exp-key');
-            expect($keys)->toContain('forever-key');
+            expect($keys)->toContain('short-exp-key')
+                ->toContain('long-exp-key')
+                ->toContain('forever-key');
 
             // Wait for short expiration
             sleep(2);
 
             // Short expired key should not be in list
             $keysAfterExpiry = $this->cacheUiLaravel->getAllKeys('file');
-            expect($keysAfterExpiry)->not->toContain('short-exp-key');
-            expect($keysAfterExpiry)->toContain('long-exp-key');
-            expect($keysAfterExpiry)->toContain('forever-key');
+            expect($keysAfterExpiry)->not->toContain('short-exp-key')
+                ->toContain('long-exp-key')
+                ->toContain('forever-key');
         });
     });
 
@@ -112,7 +111,7 @@ describe('Cache Workflow Integration Tests', function (): void {
 
             // Should be able to list both
             $keys = $this->cacheUiLaravel->getAllKeys('file');
-            expect($keys)->toBeArray();
+            expect($keys)->toContain('wrapped-mixed-key');
 
             // Should be able to read both
             $legacyValue = Cache::get('legacy-mixed-key');
@@ -141,7 +140,6 @@ describe('Cache Workflow Integration Tests', function (): void {
 
             $executionTime = $endTime - $startTime;
 
-            expect($keys)->toBeArray();
             expect(count($keys))->toBeGreaterThanOrEqual(100);
             // Should complete in reasonable time (less than 5 seconds for 100 keys)
             expect($executionTime)->toBeLessThan(5.0);
@@ -157,7 +155,7 @@ describe('Cache Workflow Integration Tests', function (): void {
             Cache::put('default-store-key', 'value', 3600);
 
             $keys = $this->cacheUiLaravel->getAllKeys();
-            expect($keys)->toBeArray();
+            expect($keys)->toContain('default-store-key');
         });
 
         it('uses specified store when provided', function (): void {
@@ -168,7 +166,7 @@ describe('Cache Workflow Integration Tests', function (): void {
             Cache::store('file')->put('specified-store-key', 'value', 3600);
 
             $keys = $this->cacheUiLaravel->getAllKeys('file');
-            expect($keys)->toBeArray();
+            expect($keys)->toContain('specified-store-key');
         });
     });
 
@@ -180,8 +178,8 @@ describe('Cache Workflow Integration Tests', function (): void {
 
             Cache::put('delete-default-key', 'value', 3600);
             $deleted = $this->cacheUiLaravel->forgetKey('delete-default-key');
-            expect($deleted)->toBeTrue();
-            expect(Cache::get('delete-default-key'))->toBeNull();
+            expect($deleted)->toBeTrue()
+                ->and(Cache::get('delete-default-key'))->toBeNull();
         });
 
         it('deletes key from specified store', function (): void {
@@ -191,8 +189,8 @@ describe('Cache Workflow Integration Tests', function (): void {
 
             Cache::store('file')->put('delete-specified-key', 'value', 3600);
             $deleted = $this->cacheUiLaravel->forgetKey('delete-specified-key', 'file');
-            expect($deleted)->toBeTrue();
-            expect(Cache::store('file')->get('delete-specified-key'))->toBeNull();
+            expect($deleted)->toBeTrue()
+                ->and(Cache::store('file')->get('delete-specified-key'))->toBeNull();
         });
 
         it('returns false when key does not exist', function (): void {
