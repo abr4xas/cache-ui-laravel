@@ -99,6 +99,29 @@ describe('CacheUiLaravel Methods', function (): void {
             expect($this->cacheUiLaravel->getAllKeys('redis'))->toBe(['user_1']);
         });
 
+        it('only strips the prefix when it sits at the start of the key', function (): void {
+            Config::set('cache.default', 'redis');
+            Config::set('cache.stores.redis.driver', 'redis');
+
+            // A key that merely contains the prefix must survive untouched; a
+            // naive str_replace would mangle it.
+            $mockConnection = Mockery::mock();
+            $mockConnection->shouldReceive('scan')
+                ->andReturn(['0', ['myapp_cache_real', 'legacy_myapp_cache_embedded']]);
+
+            $mockRedisStore = Mockery::mock(RedisStore::class);
+            $mockRedisStore->shouldReceive('connection')->andReturn($mockConnection);
+            $mockRedisStore->shouldReceive('getPrefix')->andReturn('myapp_cache_');
+
+            $mockRepository = Mockery::mock();
+            $mockRepository->shouldReceive('getStore')->andReturn($mockRedisStore);
+
+            Cache::shouldReceive('store')->with('redis')->andReturn($mockRepository);
+
+            expect($this->cacheUiLaravel->getAllKeys('redis'))
+                ->toBe(['real', 'legacy_myapp_cache_embedded']);
+        });
+
         it('keeps scanning across cursors and stops on a zero cursor', function (): void {
             Config::set('cache.default', 'redis');
             Config::set('cache.stores.redis.driver', 'redis');

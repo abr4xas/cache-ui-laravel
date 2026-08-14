@@ -70,6 +70,27 @@ describe('CacheUiLaravel File Driver Tests', function (): void {
             expect($this->cacheUiLaravel->forgetKey('test-key', 'filetest'))->toBeFalse();
         });
 
+        it('does not match an expired entry when deleting by key content', function (): void {
+            $expired = $this->cachePath.'/zz/zz/expired-file';
+            File::ensureDirectoryExists(dirname($expired));
+            File::put($expired, (time() - 3600).serialize(['key' => 'expired-key', 'value' => 'v']));
+
+            expect($this->cacheUiLaravel->forgetKey('expired-key', 'filetest'))->toBeFalse()
+                ->and(File::exists($expired))->toBeTrue();
+        });
+
+        it('does not treat a hashed filename as a wrapped key during the content scan', function (): void {
+            // Only a genuinely wrapped key may match the content scan; matching by
+            // filename is the separate deleteFileKeyByFilename() strategy, which
+            // needs the file to sit at its hashed path.
+            $stray = $this->cachePath.'/zz/zz/stray-name';
+            File::ensureDirectoryExists(dirname($stray));
+            File::put($stray, (time() + 3600).serialize('legacy-unwrapped-value'));
+
+            expect($this->cacheUiLaravel->forgetKey('stray-name', 'filetest'))->toBeFalse()
+                ->and(File::exists($stray))->toBeTrue();
+        });
+
         it('returns false when the key is nowhere in the cache directory', function () use ($writeCacheFile): void {
             $decoy = $this->cachePath.'/zz/zz/decoy';
             $writeCacheFile($decoy, 'some-other-key');

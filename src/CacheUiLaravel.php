@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace Abr4xas\CacheUiLaravel;
 
-use Exception;
 use Illuminate\Cache\DatabaseStore;
 use Illuminate\Cache\FileStore;
 use Illuminate\Cache\RedisStore;
@@ -14,6 +13,10 @@ use Illuminate\Redis\Connections\PredisConnection;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\LazyCollection;
+use Illuminate\Support\Str;
+use Symfony\Component\Finder\SplFileInfo;
+use Throwable;
 
 /**
  * Cache UI Laravel - Main class for cache key management
@@ -55,9 +58,7 @@ final class CacheUiLaravel
         // Validate store name
         $storeName = $store ?? config('cache.default');
         if (empty($storeName)) {
-            if (config('cache-ui-laravel.enable_logging', false)) {
-                Log::error('Cache UI: Invalid store name', ['store' => $storeName]);
-            }
+            $this->log('error', 'Cache UI: Invalid store name', ['store' => $storeName]);
 
             return [];
         }
@@ -65,9 +66,7 @@ final class CacheUiLaravel
         // Validate that store exists
         $stores = config('cache.stores', []);
         if (! isset($stores[$storeName])) {
-            if (config('cache-ui-laravel.enable_logging', false)) {
-                Log::error('Cache UI: Store does not exist', ['store' => $storeName]);
-            }
+            $this->log('error', 'Cache UI: Store does not exist', ['store' => $storeName]);
 
             return [];
         }
@@ -134,9 +133,7 @@ final class CacheUiLaravel
     {
         // Validate key
         if ($key === '' || $key === '0') {
-            if (config('cache-ui-laravel.enable_logging', false)) {
-                Log::warning('Cache UI: Attempted to delete empty key');
-            }
+            $this->log('warning', 'Cache UI: Attempted to delete empty key');
 
             return false;
         }
@@ -150,9 +147,7 @@ final class CacheUiLaravel
             // Validate that store exists
             $stores = config('cache.stores', []);
             if (empty($storeName) || ! isset($stores[$storeName])) {
-                if (config('cache-ui-laravel.enable_logging', false)) {
-                    Log::error('Cache UI: Store does not exist for forgetKey', ['store' => $storeName]);
-                }
+                $this->log('error', 'Cache UI: Store does not exist for forgetKey', ['store' => $storeName]);
 
                 return false;
             }
@@ -178,6 +173,24 @@ final class CacheUiLaravel
         }
 
         return $deleted;
+    }
+
+    /**
+     * Write a log line, but only when the package has logging turned on.
+     *
+     * Every failure path in this class is best-effort: it degrades to an empty
+     * result rather than surfacing an exception. Routing those through one place
+     * keeps the `enable_logging` check from being restated at each call site.
+     *
+     * @param  string  $level  A PSR-3 log level ("error", "warning", ...)
+     * @param  string  $message  The message to log
+     * @param  array<string, mixed>  $context  Additional context for the log entry
+     */
+    private function log(string $level, string $message, array $context = []): void
+    {
+        if (config('cache-ui-laravel.enable_logging', false)) {
+            Log::log($level, $message, $context);
+        }
     }
 
     /**
@@ -276,22 +289,20 @@ final class CacheUiLaravel
             if ($keys === []) {
                 try {
                     $keys = array_map(strval(...), (array) $connection->keys($prefix.'*'));
-                } catch (Exception $e) {
-                    if (config('cache-ui-laravel.enable_logging', false)) {
-                        Log::warning('Cache UI: Failed to get Redis keys using KEYS fallback', [
-                            'store' => $store->getPrefix(),
-                            'error' => $e->getMessage(),
-                        ]);
-                    }
+                } catch (Throwable $e) {
+                    $this->log('warning', 'Cache UI: Failed to get Redis keys using KEYS fallback', [
+                        'store' => $store->getPrefix(),
+                        'error' => $e->getMessage(),
+                    ]);
 
                     return [];
                 }
             }
 
+            // chopStart() only removes the prefix when it really is at the start,
+            // so a key that merely contains the prefix is left intact.
             $keys = array_map(
-                static fn (string $key): string => $prefix !== '' && str_starts_with($key, $prefix)
-                    ? mb_substr($key, mb_strlen($prefix))
-                    : $key,
+                static fn (string $key): string => Str::chopStart($key, $prefix),
                 $keys
             );
 
@@ -305,12 +316,10 @@ final class CacheUiLaravel
             }
 
             return array_values($keys);
-        } catch (Exception $e) {
-            if (config('cache-ui-laravel.enable_logging', false)) {
-                Log::error('Cache UI: Error getting Redis keys', [
-                    'error' => $e->getMessage(),
-                ]);
-            }
+        } catch (Throwable $e) {
+            $this->log('error', 'Cache UI: Error getting Redis keys', [
+                'error' => $e->getMessage(),
+            ]);
 
             return [];
         }
@@ -352,13 +361,11 @@ final class CacheUiLaravel
     {
         try {
             return Cache::store($storeName)->getStore();
-        } catch (Exception $e) {
-            if (config('cache-ui-laravel.enable_logging', false)) {
-                Log::error('Cache UI: Could not resolve cache store', [
-                    'store' => $storeName,
-                    'error' => $e->getMessage(),
-                ]);
-            }
+        } catch (Throwable $e) {
+            $this->log('error', 'Cache UI: Could not resolve cache store', [
+                'store' => $storeName,
+                'error' => $e->getMessage(),
+            ]);
 
             return null;
         }
@@ -390,84 +397,73 @@ final class CacheUiLaravel
                 return [];
             }
 
-            $files = File::allFiles($cachePath);
-            $keys = [];
-            $count = 0;
-            $skipped = 0;
+            // Lazily so the walk stops as soon as the limit is satisfied instead of
+            // reading and unserializing every cache file first.
+            $keys = LazyCollection::make(File::allFiles($cachePath))
+                ->map(fn (SplFileInfo $file): ?string => $this->readCacheKey($file))
+                // Expired and unreadable entries drop out before paging, so the
+                // offset counts real keys rather than files on disk.
+                ->reject(static fn (?string $key): bool => $key === null)
+                ->skip($offset);
 
-            foreach ($files as $file) {
-                try {
-                    // Try to read the actual key from the cached value
-                    $contents = file_get_contents($file->getPathname());
-
-                    if (mb_strlen($contents) > 10) {
-                        try {
-                            $expiration = mb_substr($contents, 0, 10);
-
-                            // Check if expired
-                            if (time() > $expiration) {
-                                continue;
-                            }
-
-                            // Only the wrapped key is needed here, never the value,
-                            // so refuse to revive objects while listing.
-                            $data = unserialize(mb_substr($contents, 10), ['allowed_classes' => false]);
-
-                            // Check if it's our wrapped format with the key
-                            if (is_array($data) && isset($data['key'])) {
-                                // Skip until we reach the offset
-                                if ($skipped < $offset) {
-                                    $skipped++;
-
-                                    continue;
-                                }
-
-                                $keys[] = $data['key'];
-                                $count++;
-
-                                // Stop if we've reached the limit
-                                if ($limit !== null && $limit > 0 && $count >= $limit) {
-                                    break;
-                                }
-
-                                continue;
-                            }
-                        } catch (Exception) {
-                            // Fall through to filename
-                        }
-                    }
-
-                    // Default to filename (hash) if we can't read the key
-                    // Skip until we reach the offset
-                    if ($skipped < $offset) {
-                        $skipped++;
-
-                        continue;
-                    }
-
-                    $keys[] = $file->getFilename();
-                    $count++;
-
-                    // Stop if we've reached the limit
-                    if ($limit !== null && $limit > 0 && $count >= $limit) {
-                        break;
-                    }
-                } catch (Exception) {
-                    // Skip files we can't read
-                    continue;
-                }
+            if ($limit !== null && $limit > 0) {
+                $keys = $keys->take($limit);
             }
 
-            return $keys;
-        } catch (Exception $e) {
-            if (config('cache-ui-laravel.enable_logging', false)) {
-                Log::error('Cache UI: Error getting file cache keys', [
-                    'error' => $e->getMessage(),
-                ]);
-            }
+            return $keys->values()->all();
+        } catch (Throwable $e) {
+            $this->log('error', 'Cache UI: Error getting file cache keys', [
+                'error' => $e->getMessage(),
+            ]);
 
             return [];
         }
+    }
+
+    /**
+     * Read the cache key a single file represents.
+     *
+     * Files written by the `key-aware-file` driver carry the original key inside
+     * the payload. Anything else -- entries from Laravel's own file store, or a
+     * payload we cannot make sense of -- falls back to the hashed filename, which
+     * is still enough for forgetKey() to delete it.
+     *
+     * @param  SplFileInfo  $file  The cache file to inspect
+     * @param  bool  $fallbackToFilename  When false, only a genuine wrapped key is
+     *                                    returned; used when matching a specific key
+     *                                    rather than building a listing.
+     * @return string|null The cache key, or null if the entry is expired or unreadable
+     */
+    private function readCacheKey(SplFileInfo $file, bool $fallbackToFilename = true): ?string
+    {
+        try {
+            $contents = File::get($file->getPathname());
+        } catch (Throwable) {
+            // Unreadable file: leave it out of the listing entirely.
+            return null;
+        }
+
+        try {
+            // Laravel's file cache format is a 10 character expiration header
+            // followed by the serialized value.
+            if (mb_strlen($contents) > 10) {
+                if (time() > (int) mb_substr($contents, 0, 10)) {
+                    return null;
+                }
+
+                // Only the wrapped key is needed here, never the value, so refuse
+                // to revive objects while listing.
+                $data = unserialize(mb_substr($contents, 10), ['allowed_classes' => false]);
+
+                if (is_array($data) && isset($data['key'])) {
+                    return (string) $data['key'];
+                }
+            }
+        } catch (Throwable) {
+            // Corrupted payload: fall through to the filename.
+        }
+
+        return $fallbackToFilename ? $file->getFilename() : null;
     }
 
     /**
@@ -508,18 +504,14 @@ final class CacheUiLaravel
             // The key column holds the prefixed key. Cache::forget() re-applies the
             // prefix, so it has to come off here or the round trip double-prefixes
             // and silently deletes nothing.
-            return array_values(array_map(
-                static fn ($key): string => $prefix !== '' && str_starts_with((string) $key, $prefix)
-                    ? mb_substr((string) $key, mb_strlen($prefix))
-                    : (string) $key,
-                $query->pluck('key')->toArray()
-            ));
-        } catch (Exception $e) {
-            if (config('cache-ui-laravel.enable_logging', false)) {
-                Log::error('Cache UI: Error getting database cache keys', [
-                    'error' => $e->getMessage(),
-                ]);
-            }
+            return $query->pluck('key')
+                ->map(static fn ($key): string => Str::chopStart((string) $key, $prefix))
+                ->values()
+                ->all();
+        } catch (Throwable $e) {
+            $this->log('error', 'Cache UI: Error getting database cache keys', [
+                'error' => $e->getMessage(),
+            ]);
 
             return [];
         }
@@ -548,46 +540,18 @@ final class CacheUiLaravel
                 return false;
             }
 
-            $files = File::allFiles($cachePath);
+            // first() stops reading as soon as the key is found. The filename
+            // fallback is disabled here so only a genuinely wrapped key matches;
+            // hashed filenames are the job of deleteFileKeyByFilename().
+            $match = LazyCollection::make(File::allFiles($cachePath))
+                ->first(fn (SplFileInfo $file): bool => $this->readCacheKey($file, fallbackToFilename: false) === $key);
 
-            foreach ($files as $file) {
-                try {
-                    $content = File::get($file->getPathname());
-
-                    // Laravel file cache format: expiration_time + serialized_value
-                    if (mb_strlen($content) < 10) {
-                        continue;
-                    }
-
-                    $expiration = mb_substr($content, 0, 10);
-
-                    // Check if expired
-                    if (time() > $expiration) {
-                        continue;
-                    }
-
-                    $serialized = mb_substr($content, 10);
-
-                    // Try to unserialize to get the data
-                    // Only the wrapped key is compared, never the value.
-                    $data = unserialize($serialized, ['allowed_classes' => false]);
-                    if (is_array($data) && isset($data['key']) && $data['key'] === $key) {
-                        return File::delete($file->getPathname());
-                    }
-                } catch (Exception) {
-                    // If we can't read this file, skip it
-                    continue;
-                }
-            }
-
-            return false;
-        } catch (Exception $e) {
-            if (config('cache-ui-laravel.enable_logging', false)) {
-                Log::warning('Cache UI: Error deleting file cache key by key', [
-                    'key' => $key,
-                    'error' => $e->getMessage(),
-                ]);
-            }
+            return $match instanceof SplFileInfo && File::delete($match->getPathname());
+        } catch (Throwable $e) {
+            $this->log('warning', 'Cache UI: Error deleting file cache key by key', [
+                'key' => $key,
+                'error' => $e->getMessage(),
+            ]);
 
             return false;
         }
@@ -629,13 +593,11 @@ final class CacheUiLaravel
             }
 
             return false;
-        } catch (Exception $e) {
-            if (config('cache-ui-laravel.enable_logging', false)) {
-                Log::warning('Cache UI: Error deleting file cache key by filename', [
-                    'filename' => $filename,
-                    'error' => $e->getMessage(),
-                ]);
-            }
+        } catch (Throwable $e) {
+            $this->log('warning', 'Cache UI: Error deleting file cache key by filename', [
+                'filename' => $filename,
+                'error' => $e->getMessage(),
+            ]);
 
             return false;
         }
