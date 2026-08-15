@@ -25,6 +25,16 @@ Optionally, you can publish the config file with:
 php artisan vendor:publish --tag="cache-ui-laravel-config"
 ```
 
+### AI agent skill
+
+The package ships a [Laravel Boost](https://laravel.com/docs/13.x/boost) agent skill, `cache-store-development`. If you use Boost, it is offered during install:
+
+```bash
+php artisan boost:install
+```
+
+The skill covers the cache internals this package had to get right, and which are easy to get wrong in any code that inspects or extends a cache store: reading a store's path, table, connection and key prefix off the resolved store instead of from config; which stores apply a key prefix and which do not; the two prefixes stacked on a Redis key returned by `SCAN`; and the payload-touching methods a `Store` subclass has to override. It lives in [`resources/boost/skills/`](resources/boost/skills/cache-store-development/SKILL.md) and is verified against Laravel 13.x.
+
 ### Configuration
 
 After publishing the config file, you can customize the package behavior:
