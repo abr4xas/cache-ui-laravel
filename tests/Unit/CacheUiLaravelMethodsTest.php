@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use Abr4xas\CacheUiLaravel\CacheUiLaravel;
+use Illuminate\Cache\RedisStore;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\DB;
@@ -19,7 +20,6 @@ describe('CacheUiLaravel Methods', function (): void {
             Config::set('cache.stores.array.driver', 'array');
 
             $result = $this->cacheUiLaravel->getAllKeys();
-            expect($result)->toBeArray();
             expect($result)->toBeEmpty();
         });
 
@@ -28,7 +28,6 @@ describe('CacheUiLaravel Methods', function (): void {
             Config::set('cache.stores.unsupported.driver', 'unsupported');
 
             $result = $this->cacheUiLaravel->getAllKeys();
-            expect($result)->toBeArray();
             expect($result)->toBeEmpty();
         });
 
@@ -36,17 +35,33 @@ describe('CacheUiLaravel Methods', function (): void {
             Config::set('cache.default', 'redis');
             Config::set('cache.stores.redis.driver', 'redis');
 
-            // Mock Redis connection
+            // SCAN comes back empty, so the implementation falls back to KEYS.
             $mockConnection = Mockery::mock();
+            $mockConnection->shouldReceive('scan')->andReturn([0, []]);
             $mockConnection->shouldReceive('keys')->with('*')->andReturn(['key1', 'key2']);
 
-            $mockStore = Mockery::mock();
-            $mockStore->shouldReceive('getStore->connection')->andReturn($mockConnection);
+            $mockRedisStore = Mockery::mock(RedisStore::class);
+            $mockRedisStore->shouldReceive('connection')->andReturn($mockConnection);
 
-            Cache::shouldReceive('store')->with('redis')->andReturn($mockStore);
+            $mockRepository = Mockery::mock();
+            $mockRepository->shouldReceive('getStore')->andReturn($mockRedisStore);
+
+            Cache::shouldReceive('store')->with('redis')->andReturn($mockRepository);
 
             $result = $this->cacheUiLaravel->getAllKeys('redis');
-            expect($result)->toBeArray();
+            expect($result)->toBe(['key1', 'key2']);
+        });
+
+        it('returns an empty list when the store is not backed by Redis', function (): void {
+            Config::set('cache.default', 'redis');
+            Config::set('cache.stores.redis.driver', 'redis');
+
+            $mockRepository = Mockery::mock();
+            $mockRepository->shouldReceive('getStore')->andReturn(Mockery::mock());
+
+            Cache::shouldReceive('store')->with('redis')->andReturn($mockRepository);
+
+            expect($this->cacheUiLaravel->getAllKeys('redis'))->toBeEmpty();
         });
 
         it('handles file driver with non-existent directory', function (): void {
@@ -57,7 +72,6 @@ describe('CacheUiLaravel Methods', function (): void {
             File::shouldReceive('exists')->andReturn(false);
 
             $result = $this->cacheUiLaravel->getAllKeys('file');
-            expect($result)->toBeArray();
             expect($result)->toBeEmpty();
         });
 
@@ -71,7 +85,6 @@ describe('CacheUiLaravel Methods', function (): void {
             File::shouldReceive('allFiles')->andReturn([]);
 
             $result = $this->cacheUiLaravel->getAllKeys('file');
-            expect($result)->toBeArray();
             expect($result)->toBeEmpty();
         });
 
@@ -85,7 +98,6 @@ describe('CacheUiLaravel Methods', function (): void {
             File::shouldReceive('allFiles')->andReturn([]);
 
             $result = $this->cacheUiLaravel->getAllKeys('file');
-            expect($result)->toBeArray();
             expect($result)->toBeEmpty();
         });
 
@@ -99,7 +111,6 @@ describe('CacheUiLaravel Methods', function (): void {
             File::shouldReceive('allFiles')->andReturn([]);
 
             $result = $this->cacheUiLaravel->getAllKeys('file');
-            expect($result)->toBeArray();
             expect($result)->toBeEmpty();
         });
 
@@ -112,7 +123,7 @@ describe('CacheUiLaravel Methods', function (): void {
             DB::shouldReceive('pluck')->with('key')->andReturn(collect(['key1', 'key2']));
 
             $result = $this->cacheUiLaravel->getAllKeys('database');
-            expect($result)->toBeArray();
+            expect($result)->toBe(['key1', 'key2']);
         });
 
         it('uses default store when no store specified', function (): void {
@@ -120,7 +131,7 @@ describe('CacheUiLaravel Methods', function (): void {
             Config::set('cache.stores.array.driver', 'array');
 
             $result = $this->cacheUiLaravel->getAllKeys();
-            expect($result)->toBeArray();
+            expect($result)->toBeEmpty();
         });
     });
 
@@ -153,7 +164,7 @@ describe('CacheUiLaravel Methods', function (): void {
             Cache::shouldReceive('store')->withNoArgs()->andReturnSelf();
             Cache::shouldReceive('forget')->with('test-key')->andReturn(true);
 
-            $result = $this->cacheUiLaravel->forgetKey('test-key', null);
+            $result = $this->cacheUiLaravel->forgetKey('test-key');
             expect($result)->toBeTrue();
         });
 
@@ -182,7 +193,6 @@ describe('CacheUiLaravel Methods', function (): void {
             Cache::shouldReceive('store')->with('redis')->andThrow(new Exception('Redis connection failed'));
 
             $result = $this->cacheUiLaravel->getAllKeys('redis');
-            expect($result)->toBeArray();
             expect($result)->toBeEmpty();
         });
 
@@ -195,7 +205,6 @@ describe('CacheUiLaravel Methods', function (): void {
             File::shouldReceive('allFiles')->andThrow(new Exception('File system error'));
 
             $result = $this->cacheUiLaravel->getAllKeys('file');
-            expect($result)->toBeArray();
             expect($result)->toBeEmpty();
         });
 
@@ -207,7 +216,6 @@ describe('CacheUiLaravel Methods', function (): void {
             DB::shouldReceive('table')->with('cache')->andThrow(new Exception('Database connection failed'));
 
             $result = $this->cacheUiLaravel->getAllKeys('database');
-            expect($result)->toBeArray();
             expect($result)->toBeEmpty();
         });
     });
@@ -226,7 +234,7 @@ describe('CacheUiLaravel Methods', function (): void {
             DB::shouldReceive('table')->with('cache')->andReturn($mockQuery);
 
             $result = $this->cacheUiLaravel->getAllKeys('database', null, -5);
-            expect($result)->toBeArray();
+            expect($result)->toBe(['key1', 'key2']);
         });
 
         it('applies offset correctly for database driver', function (): void {
@@ -242,7 +250,6 @@ describe('CacheUiLaravel Methods', function (): void {
             DB::shouldReceive('table')->with('cache')->andReturn($mockQuery);
 
             $result = $this->cacheUiLaravel->getAllKeys('database', 5, 10);
-            expect($result)->toBeArray();
             expect($result)->toHaveCount(5);
         });
 

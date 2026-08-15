@@ -7,13 +7,6 @@ use Abr4xas\CacheUiLaravel\CacheUiLaravelServiceProvider;
 
 describe('CacheUiLaravelServiceProvider Tests', function (): void {
     describe('ServiceProvider structure', function (): void {
-        it('can be instantiated', function (): void {
-            $app = Mockery::mock(Illuminate\Contracts\Foundation\Application::class);
-            $serviceProvider = new CacheUiLaravelServiceProvider($app);
-
-            expect($serviceProvider)->toBeInstanceOf(CacheUiLaravelServiceProvider::class);
-        });
-
         it('extends Laravel ServiceProvider', function (): void {
             $app = Mockery::mock(Illuminate\Contracts\Foundation\Application::class);
             $serviceProvider = new CacheUiLaravelServiceProvider($app);
@@ -30,14 +23,14 @@ describe('CacheUiLaravelServiceProvider Tests', function (): void {
         it('has required methods', function (): void {
             $reflection = new ReflectionClass(CacheUiLaravelServiceProvider::class);
 
-            expect($reflection->hasMethod('boot'))->toBeTrue();
-            expect($reflection->hasMethod('register'))->toBeTrue();
+            expect($reflection->hasMethod('boot'))->toBeTrue()
+                ->and($reflection->hasMethod('register'))->toBeTrue();
 
             $bootMethod = $reflection->getMethod('boot');
             $registerMethod = $reflection->getMethod('register');
 
-            expect($bootMethod->isPublic())->toBeTrue();
-            expect($registerMethod->isPublic())->toBeTrue();
+            expect($bootMethod->isPublic())->toBeTrue()
+                ->and($registerMethod->isPublic())->toBeTrue();
         });
     });
 
@@ -64,8 +57,8 @@ describe('CacheUiLaravelServiceProvider Tests', function (): void {
             $reflection = new ReflectionClass(CacheUiLaravelServiceProvider::class);
             $method = $reflection->getMethod('boot');
 
-            expect($method->isPublic())->toBeTrue();
-            expect($method->getReturnType()->getName())->toBe('void');
+            expect($method->isPublic())->toBeTrue()
+                ->and((string) $method->getReturnType())->toBe('void');
         });
     });
 });

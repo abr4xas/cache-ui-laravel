@@ -8,27 +8,24 @@ describe('Cache UI Laravel Configuration', function (): void {
     it('configuration file exists', function (): void {
         $configPath = __DIR__.'/../../config/cache-ui-laravel.php';
 
-        expect(file_exists($configPath))->toBeTrue();
-        expect(is_readable($configPath))->toBeTrue();
+        expect(file_exists($configPath))->toBeTrue()
+            ->and(is_readable($configPath))->toBeTrue();
     });
 
     it('configuration file returns valid array', function (): void {
         $configPath = __DIR__.'/../../config/cache-ui-laravel.php';
         $config = require $configPath;
 
-        expect($config)->toBeArray();
-        expect($config)->toHaveKey('default_store');
-        expect($config)->toHaveKey('preview_limit');
-        expect($config)->toHaveKey('search_scroll');
+        expect($config)->toBeArray()
+            ->toHaveKeys(['default_store', 'preview_limit', 'search_scroll']);
     });
 
     it('has correct default values', function (): void {
         $configPath = __DIR__.'/../../config/cache-ui-laravel.php';
         $config = require $configPath;
 
-        expect($config['default_store'])->toBeNull();
-        expect($config['preview_limit'])->toBe(100);
-        expect($config['search_scroll'])->toBe(15);
+        expect($config['default_store'])->toBeNull()
+            ->and($config)->toMatchArray(['preview_limit' => 100, 'search_scroll' => 15]);
     });
 
     it('can be loaded via Config facade', function (): void {
@@ -39,10 +36,8 @@ describe('Cache UI Laravel Configuration', function (): void {
 
         $loadedConfig = Config::get('cache-ui-laravel');
 
-        expect($loadedConfig)->toBeArray();
-        expect($loadedConfig)->toHaveKey('default_store');
-        expect($loadedConfig)->toHaveKey('preview_limit');
-        expect($loadedConfig)->toHaveKey('search_scroll');
+        expect($loadedConfig)->toBeArray()
+            ->toHaveKeys(['default_store', 'preview_limit', 'search_scroll']);
     });
 
     it('supports environment variable overrides', function (): void {

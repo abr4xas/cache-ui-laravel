@@ -2,9 +2,9 @@
 
 declare(strict_types=1);
 
+use Pest\Rector\Set\PestSetList;
 use Rector\Config\RectorConfig;
 use Rector\DeadCode\Rector\If_\RemoveAlwaysTrueIfConditionRector;
-use Rector\Php83\Rector\ClassMethod\AddOverrideAttributeToOverriddenMethodsRector;
 
 return RectorConfig::configure()
     ->withPaths([
@@ -12,7 +12,6 @@ return RectorConfig::configure()
         __DIR__.'/tests',
     ])
     ->withSkip([
-        AddOverrideAttributeToOverriddenMethodsRector::class,
         // False positive on the Redis SCAN fallback in getRedisKeys(): Laravel's
         // Redis Connection class is annotated `@mixin \Redis`, so Rector resolves
         // scan() to the raw PhpRedis signature and wrongly concludes the `$keys`
@@ -29,4 +28,8 @@ return RectorConfig::configure()
         privatization: true,
         earlyReturn: true,
     )
-    ->withPhpSets();
+    ->withPhpSets()
+    // Pest's own Rector rules: modernize expectations and keep test style consistent.
+    ->withSets([
+        PestSetList::CODING_STYLE,
+    ]);

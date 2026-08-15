@@ -17,17 +17,20 @@
 	"minimum-stability": "stable",
 	"require": {
 		"php": "^8.4",
-		"laravel/framework": "^13.15",
-		"laravel/prompts": "^0.3.18"
+		"laravel/framework": "^13.25",
+		"laravel/prompts": "^0.3.22"
 	},
 	"require-dev": {
-		"larastan/larastan": "^3.0",
-		"laravel/pint": "^1.29.1",
-		"orchestra/testbench": "^11.1",
-		"pestphp/pest": "^4.7.2",
-		"pestphp/pest-plugin-type-coverage": "^4.0.4",
-		"phpstan/phpstan": "^2.2.2",
-		"rector/rector": "^2.4.5"
+		"larastan/larastan": "^3.10",
+		"laravel/pint": "^1.30.5",
+		"orchestra/testbench": "^11.2",
+		"pestphp/pest": "^5.1.1",
+		"pestphp/pest-plugin-phpstan": "^5.0.2",
+		"pestphp/pest-plugin-rector": "^5.0.3",
+		"pestphp/pest-plugin-type-coverage": "^5.0.2",
+		"phpstan/phpstan": "^2.2.8",
+		"phpstan/phpstan-mockery": "^2.0",
+		"rector/rector": "^2.6.2"
 	},
 	"autoload-dev": {
 		"psr-4": {

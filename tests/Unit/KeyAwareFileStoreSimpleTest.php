@@ -25,34 +25,13 @@ describe('KeyAwareFileStore Simple Tests', function (): void {
         }
     });
 
-    it('can be instantiated', function (): void {
-        expect($this->keyAwareFileStore)->toBeInstanceOf(KeyAwareFileStore::class);
-    });
-
-    it('has required methods', function (): void {
-        expect(method_exists($this->keyAwareFileStore, 'put'))->toBeTrue();
-        expect(method_exists($this->keyAwareFileStore, 'get'))->toBeTrue();
-        expect(method_exists($this->keyAwareFileStore, 'add'))->toBeTrue();
-        expect(method_exists($this->keyAwareFileStore, 'forever'))->toBeTrue();
-        expect(method_exists($this->keyAwareFileStore, 'increment'))->toBeTrue();
-    });
-
     it('can store and retrieve a simple value', function (): void {
         $key = 'test-key';
         $value = 'test-value';
         $seconds = 3600;
 
-        // Store the value
-        $result = $this->keyAwareFileStore->put($key, $value, $seconds);
-
-        // The put method should return true or false depending on file system permissions
-        expect($result)->toBeBool();
-
-        // If successful, try to retrieve
-        if ($result) {
-            $retrievedValue = $this->keyAwareFileStore->get($key);
-            expect($retrievedValue)->toBe($value);
-        }
+        expect($this->keyAwareFileStore->put($key, $value, $seconds))->toBeTrue()
+            ->and($this->keyAwareFileStore->get($key))->toBe($value);
     });
 
     it('returns null for non-existent key', function (): void {
