@@ -8,6 +8,18 @@ use Illuminate\Cache\FileStore;
 use Illuminate\Contracts\Filesystem\LockTimeoutException;
 use Illuminate\Filesystem\LockableFile;
 
+/**
+ * A file cache store that records the original key alongside each value.
+ *
+ * Laravel's FileStore hashes the key into the filename and stores only the
+ * value, so the key itself is unrecoverable from disk. This store wraps every
+ * payload as `['key' => ..., 'value' => ...]` so Cache UI can list real key
+ * names instead of sha1 hashes.
+ *
+ * Because that changes the on-disk format, every method that reads or writes a
+ * payload has to be overridden. Anything that only reads through getPayload()
+ * (has, forget, flush, locks) is inherited unchanged.
+ */
 final class KeyAwareFileStore extends FileStore
 {
     /**
@@ -20,16 +32,10 @@ final class KeyAwareFileStore extends FileStore
      */
     public function put($key, $value, $seconds): bool
     {
-        // Wrap the value with the key for Cache UI visibility
-        $wrappedValue = [
-            'key' => $key,
-            'value' => $value,
-        ];
-
         $this->ensureCacheDirectoryExists($path = $this->path($key));
 
         $result = $this->files->put(
-            $path, $this->expiration($seconds).serialize($wrappedValue), true
+            $path, $this->header($seconds).serialize($this->wrap($key, $value)), true
         );
 
         if ($result !== false && $result > 0) {
@@ -49,16 +55,7 @@ final class KeyAwareFileStore extends FileStore
      */
     public function get($key): mixed
     {
-        $payload = $this->getPayload($key)['data'] ?? null;
-
-        // Unwrap the value if it's in our format
-        // Use array_key_exists instead of isset to handle null values correctly
-        if (is_array($payload) && array_key_exists('key', $payload) && array_key_exists('value', $payload)) {
-            return $payload['value'];
-        }
-
-        // Return as-is for backwards compatibility
-        return $payload;
+        return $this->unwrap($this->getPayload($key)['data'] ?? null);
     }
 
     /**
@@ -71,12 +68,6 @@ final class KeyAwareFileStore extends FileStore
      */
     public function add($key, $value, $seconds): bool
     {
-        // Wrap the value with the key
-        $wrappedValue = [
-            'key' => $key,
-            'value' => $value,
-        ];
-
         $this->ensureCacheDirectoryExists($path = $this->path($key));
 
         $file = new LockableFile($path, 'c+');
@@ -93,7 +84,7 @@ final class KeyAwareFileStore extends FileStore
 
         if (empty($expire) || $this->currentTime() >= $expire) {
             $file->truncate()
-                ->write($this->expiration($seconds).serialize($wrappedValue))
+                ->write($this->header($seconds).serialize($this->wrap($key, $value)))
                 ->close();
 
             $this->ensurePermissionsAreCorrect($path);
@@ -119,7 +110,10 @@ final class KeyAwareFileStore extends FileStore
     }
 
     /**
-     * Touch an item in the cache.
+     * Adjust the expiration time of a cached item.
+     *
+     * Overridden because the parent re-stores `$payload['data']` verbatim, which
+     * for this store is the wrapper array and would end up double-wrapped.
      *
      * @param  string  $key  The cache key
      * @param  int  $seconds  Number of seconds until expiration
@@ -127,18 +121,67 @@ final class KeyAwareFileStore extends FileStore
      */
     public function touch($key, $seconds): bool
     {
-        $payload = $this->getPayload($key);
+        $payload = $this->getPayload($this->getPrefix().$key);
 
         if (is_null($payload['data'])) {
             return false;
         }
 
-        $data = $payload['data'];
-        $unwrapped = is_array($data) && array_key_exists('key', $data) && array_key_exists('value', $data)
-            ? $data['value']
-            : $data;
+        return $this->put($key, $this->unwrap($payload['data']), $seconds);
+    }
 
-        return $this->put($key, $unwrapped, $seconds);
+    /**
+     * Atomically refresh the expiration of a cache key if it matches the expected owner.
+     *
+     * Used by FileLock::refresh(). The parent reads the payload raw, which for
+     * this store is the wrapper array and never matches the expected owner, so
+     * the payload has to be unwrapped before the comparison and re-wrapped on
+     * write.
+     *
+     * @param  string  $key  The cache key
+     * @param  mixed  $expectedOwner  The owner the lock must currently belong to
+     * @param  int  $seconds  Number of seconds until the refreshed expiration
+     * @return bool True if the lock was refreshed, false otherwise
+     */
+    public function refreshIfOwned($key, $expectedOwner, $seconds): bool
+    {
+        $this->ensureCacheDirectoryExists($path = $this->path($key));
+
+        $file = new LockableFile($path, 'c+');
+
+        try {
+            $file->getExclusiveLock();
+        } catch (LockTimeoutException) {
+            $file->close();
+
+            return false;
+        }
+
+        $contents = $file->read();
+
+        if (mb_strlen($contents) < 10) {
+            $file->close();
+
+            return false;
+        }
+
+        $expire = mb_substr($contents, 0, 10);
+
+        $currentOwner = $this->unwrap($this->unserialize(mb_substr($contents, 10)));
+
+        if ($currentOwner !== $expectedOwner || $this->currentTime() >= $expire) {
+            $file->close();
+
+            return false;
+        }
+
+        $file->truncate()
+            ->write($this->header($seconds).serialize($this->wrap($key, $expectedOwner)))
+            ->close();
+
+        $this->ensurePermissionsAreCorrect($path);
+
+        return true;
     }
 
     /**
@@ -151,12 +194,10 @@ final class KeyAwareFileStore extends FileStore
     public function increment($key, $value = 1): mixed
     {
         $raw = $this->getPayload($key);
-        $data = $raw['data'] ?? null;
 
-        // Unwrap if needed
-        $currentValue = is_array($data) && isset($data['value']) ? (int) $data['value'] : (int) $data;
+        $current = (int) $this->unwrap($raw['data'] ?? null);
 
-        return tap($currentValue + $value, function ($newValue) use ($key, $raw): void {
+        return tap($current + $value, function ($newValue) use ($key, $raw): void {
             $this->put($key, $newValue, $raw['time'] ?? 0);
         });
     }
@@ -170,48 +211,52 @@ final class KeyAwareFileStore extends FileStore
      */
     public function decrement($key, $value = 1): mixed
     {
-        $raw = $this->getPayload($key);
-        $data = $raw['data'] ?? null;
-
-        // Unwrap if needed
-        $currentValue = is_array($data) && isset($data['value']) ? (int) $data['value'] : (int) $data;
-
-        return tap($currentValue - $value, function ($newValue) use ($key, $raw): void {
-            $this->put($key, $newValue, $raw['time'] ?? 0);
-        });
+        return $this->increment($key, $value * -1);
     }
 
     /**
-     * Remove all items from the cache.
+     * Build the fixed-width expiration header that precedes the payload.
      *
-     * @return bool True if successful, false otherwise
+     * getPayload() reads the expiration with substr($contents, 0, 10), so the
+     * header must always be exactly 10 characters wide.
+     *
+     * @param  int  $seconds  Number of seconds until expiration
      */
-    public function flush(): bool
+    private function header($seconds): string
     {
-        if (! $this->files->isDirectory($this->directory)) {
-            return false;
-        }
-
-        foreach ($this->files->directories($this->directory) as $directory) {
-            $deleted = $this->files->deleteDirectory($directory);
-
-            if (! $deleted || $this->files->exists($directory)) {
-                return false;
-            }
-        }
-
-        return true;
+        return mb_str_pad((string) $this->expiration($seconds), 10, '0', STR_PAD_LEFT);
     }
 
     /**
-     * Ensure the cache directory exists.
+     * Wrap a value together with its key for on-disk storage.
      *
-     * @param  string  $path  The file path
+     * @param  string  $key  The cache key
+     * @param  mixed  $value  The value to store
+     * @return array{key: string, value: mixed}
      */
-    protected function ensureCacheDirectoryExists($path): void
+    private function wrap($key, $value): array
     {
-        if (! $this->files->exists($directory = dirname($path))) {
-            $this->files->makeDirectory($directory, 0755, true);
+        return ['key' => $key, 'value' => $value];
+    }
+
+    /**
+     * Unwrap a payload written by this store.
+     *
+     * Payloads written by Laravel's own FileStore, or by an older version of
+     * this package, are returned untouched for backwards compatibility.
+     *
+     * Uses array_key_exists() rather than isset() so a wrapped null value is
+     * still recognised as wrapped.
+     *
+     * @param  mixed  $payload  The raw payload read from disk
+     * @return mixed The unwrapped value
+     */
+    private function unwrap($payload): mixed
+    {
+        if (is_array($payload) && array_key_exists('key', $payload) && array_key_exists('value', $payload)) {
+            return $payload['value'];
         }
+
+        return $payload;
     }
 }
