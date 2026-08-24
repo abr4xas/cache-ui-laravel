@@ -2,6 +2,18 @@
 
 All notable changes to `cache-ui-laravel` will be documented in this file.
 
+## v4.0.0 - 2026-08-24
+
+### What's Changed
+
+* Upgrade to Pest 5, refresh dependencies, add Pest quality plugins by @abr4xas in https://github.com/abr4xas/cache-ui-laravel/pull/26
+* Realign KeyAwareFileStore and driver registration with Laravel 13 by @abr4xas in https://github.com/abr4xas/cache-ui-laravel/pull/27
+* Derive cache listing from the resolved store instead of config paths by @abr4xas in https://github.com/abr4xas/cache-ui-laravel/pull/28
+* Lean on Laravel's own helpers in CacheUiLaravel by @abr4xas in https://github.com/abr4xas/cache-ui-laravel/pull/29
+* Ship a cache-store-development Boost skill by @abr4xas in https://github.com/abr4xas/cache-ui-laravel/pull/30
+
+**Full Changelog**: https://github.com/abr4xas/cache-ui-laravel/compare/v3.0.0...v4.0.0
+
 ## v3.0.0 - 2026-07-02
 
 ### What's Changed
