@@ -9,12 +9,6 @@ parameters:
         - src
         - tests
     ignoreErrors:
-        # Pest\PendingCalls\DescribeCall proxies test-call modifiers (group(),
-        # skip(), etc.) through __call() without declaring @method annotations,
-        # so PHPStan can't see them. Valid at runtime.
-        -
-            message: '#Call to an undefined method Pest\\PendingCalls\\DescribeCall::#'
-            path: tests
         # False positives on the Redis SCAN path. Laravel's abstract
         # Illuminate\Redis\Connections\Connection class is annotated `@mixin \Redis`,
         # so static analysis resolves `scan()` to the raw PhpRedis signature
