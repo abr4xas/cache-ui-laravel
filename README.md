@@ -1,5 +1,6 @@
 <picture>
-<img alt="Cache UI Laravel" src="art/cache-ui-laravel.png">
+  <source media="(prefers-color-scheme: dark)" srcset=".github/cache-ui-laravel-dark.png">
+  <img alt="cache-ui-laravel" src=".github/cache-ui-laravel-light.png" width="100%">
 </picture>
 
 # Cache UI Laravel
