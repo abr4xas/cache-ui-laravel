@@ -2,6 +2,15 @@
 
 All notable changes to `cache-ui-laravel` will be documented in this file.
 
+## v4.1.0 - 2026-09-29
+
+### What's Changed
+
+* Refresh dependencies and cover the Redis cluster scan cursor by @abr4xas in https://github.com/abr4xas/cache-ui-laravel/pull/32
+* Switch the README banner to light and dark variants by @abr4xas in https://github.com/abr4xas/cache-ui-laravel/pull/33
+
+**Full Changelog**: https://github.com/abr4xas/cache-ui-laravel/compare/v4.0.0...v4.1.0
+
 ## v4.0.0 - 2026-08-24
 
 ### What's Changed
