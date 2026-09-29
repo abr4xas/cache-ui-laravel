@@ -145,6 +145,34 @@ describe('CacheUiLaravel Methods', function (): void {
             expect($this->cacheUiLaravel->getAllKeys('redis'))->toBe(['first', 'second']);
         });
 
+        it('keeps scanning through the opaque cursor of a Redis cluster', function (): void {
+            Config::set('cache.default', 'redis');
+            Config::set('cache.stores.redis.driver', 'redis');
+
+            // Since Laravel 13.26 PhpRedisClusterConnection::scan() walks every master
+            // node behind a "laravel:<base64>" cursor, and a master with no matching
+            // keys comes back as an empty chunk. Neither may end the loop early; only
+            // the caller's own starting cursor, handed back at the end, does.
+            $mockConnection = Mockery::mock();
+            $mockConnection->shouldReceive('scan')
+                ->andReturn(
+                    ['laravel:bm9kZS1h', ['on_first_master']],
+                    ['laravel:bm9kZS1i', []],
+                    ['0', ['on_last_master']],
+                );
+
+            $mockRedisStore = Mockery::mock(RedisStore::class);
+            $mockRedisStore->shouldReceive('connection')->andReturn($mockConnection);
+            $mockRedisStore->shouldReceive('getPrefix')->andReturn('');
+
+            $mockRepository = Mockery::mock();
+            $mockRepository->shouldReceive('getStore')->andReturn($mockRedisStore);
+
+            Cache::shouldReceive('store')->with('redis')->andReturn($mockRepository);
+
+            expect($this->cacheUiLaravel->getAllKeys('redis'))->toBe(['on_first_master', 'on_last_master']);
+        });
+
         it('returns an empty list when the store is not backed by Redis', function (): void {
             Config::set('cache.default', 'redis');
             Config::set('cache.stores.redis.driver', 'redis');
